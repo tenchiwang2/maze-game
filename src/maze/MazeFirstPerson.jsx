@@ -99,6 +99,24 @@ function buildSingleMap(cols, rows, fixedRooms, randomCount, safeMin, safeMax, d
   };
 }
 
+// 在目標格 (gx, gy) 附近找到最近的可通行格，回傳 { px, py }
+// minDist=2 時跳過傳送門本身的格子，避免傳送後立刻站在傳送門上
+function findSafeSpawn(grid, gx, gy, minDist = 0) {
+  const H = grid.length, W = grid[0].length;
+  for (let d = minDist; d <= 6; d++) {
+    for (let dy = -d; dy <= d; dy++) {
+      for (let dx = -d; dx <= d; dx++) {
+        if (Math.abs(dy) !== d && Math.abs(dx) !== d) continue;
+        const ny = gy + dy, nx = gx + dx;
+        if (ny >= 1 && ny < H - 1 && nx >= 1 && nx < W - 1 && grid[ny][nx] === 0) {
+          return { px: nx + 0.5, py: ny + 0.5 };
+        }
+      }
+    }
+  }
+  return { px: 1.5, py: 1.5 };
+}
+
 // 將指定地圖快照的資料複製到遊戲狀態 s
 function syncCurrentMap(s) {
   const map = s.maps[s.currentMapIdx];
@@ -394,6 +412,7 @@ export default function MazeFirstPerson() {
   const [defaultDoorOpen, setDefaultDoorOpen] = useState(true);
   const [factoryMode, setFactoryMode] = useState(FACTORY_IDS.CUSTOM);
   const [currentMapIdx, setCurrentMapIdx] = useState(0);
+  const [transitionPrompt, setTransitionPrompt] = useState(null); // null | 'fwd' | 'bwd'
 
   const g = useRef({
     walls: null, grid: null, zoneMap: null, rooms: [], doors: [],
@@ -403,7 +422,8 @@ export default function MazeFirstPerson() {
     entryGX: 1, entryGY: 1, exitGX: 0, exitGY: 0,
     eCell: { r: 0, c: 0 }, xCell: { r: 0, c: 0 },
     cols, rows, interactCooldown: 0,
-    multiMap: false, maps: [], currentMapIdx: 0, mapTransitionCooldown: 0,
+    multiMap: false, maps: [], currentMapIdx: 0,
+    transitionPrompt: null, wasOnPortal: false,
   });
   const renderRef = useRef(null);
   const eventsRef = useRef(events);
@@ -454,34 +474,35 @@ export default function MazeFirstPerson() {
       if (s.keys["ArrowLeft"] || s.keys["a"]) s.angle -= TURN_SPEED;
       if (s.keys["ArrowRight"] || s.keys["d"]) s.angle += TURN_SPEED;
 
-      if (Math.floor(s.px) === s.exitGX && Math.floor(s.py) === s.exitGY && s.mapTransitionCooldown === 0) {
-        if (s.multiMap && s.currentMapIdx < 2) {
-          // 切換至下一張地圖
-          s.currentMapIdx++;
-          syncCurrentMap(s);
-          eventsRef.current = [];
-          setEvents([]);
-          setCurrentMapIdx(s.currentMapIdx);
-          s.px = 1.5; s.py = 1.5;
-          s.mapTransitionCooldown = 90;
-        } else {
-          s.won = true; setWon(true);
+      const onExitPortal  = Math.floor(s.px) === s.exitGX  && Math.floor(s.py) === s.exitGY;
+      const onEntryPortal = s.multiMap && s.currentMapIdx > 0
+        && Math.floor(s.px) === s.entryGX && Math.floor(s.py) === s.entryGY;
+
+      // 玩家離開傳送門後才能再觸發詢問
+      if (s.wasOnPortal && !onExitPortal && !onEntryPortal) {
+        s.wasOnPortal = false;
+      }
+      // 玩家離開傳送門時自動收起詢問框
+      if (s.transitionPrompt && !onExitPortal && !onEntryPortal) {
+        s.transitionPrompt = null;
+        setTransitionPrompt(null);
+      }
+      // 首次踩上傳送門時顯示詢問框
+      if (!s.wasOnPortal && !s.transitionPrompt) {
+        if (onExitPortal) {
+          if (s.multiMap && s.currentMapIdx < 2) {
+            s.transitionPrompt = 'fwd';
+            setTransitionPrompt('fwd');
+          } else {
+            s.won = true; setWon(true);
+          }
+          s.wasOnPortal = true;
+        } else if (onEntryPortal) {
+          s.transitionPrompt = 'bwd';
+          setTransitionPrompt('bwd');
+          s.wasOnPortal = true;
         }
       }
-      // 多地圖：踩到入口 → 回到上一張地圖
-      if (s.multiMap && s.currentMapIdx > 0 && s.mapTransitionCooldown === 0) {
-        if (Math.floor(s.px) === s.entryGX && Math.floor(s.py) === s.entryGY) {
-          s.currentMapIdx--;
-          syncCurrentMap(s);
-          eventsRef.current = [];
-          setEvents([]);
-          setCurrentMapIdx(s.currentMapIdx);
-          // 在前一張地圖出口旁生成，避免立即再觸發
-          s.px = s.exitGX - 1.5; s.py = s.exitGY - 1.5;
-          s.mapTransitionCooldown = 90;
-        }
-      }
-      if (s.mapTransitionCooldown > 0) s.mapTransitionCooldown--;
 
       const mr = Math.round((s.py - 1) / 2), mc = Math.round((s.px - 1) / 2);
       eventsRef.current.forEach((ev, i) => {
@@ -547,7 +568,8 @@ export default function MazeFirstPerson() {
     const factory = FACTORIES.find(f => f.id === factoryMode) || FACTORIES[2];
 
     s.won = false; s.t = 0; s.keys = {}; s.interactCooldown = 0;
-    s.mapTransitionCooldown = 0;
+    s.transitionPrompt = null; s.wasOnPortal = false;
+    setTransitionPrompt(null);
     setWon(false); setLog([]);
 
     if (factory.multiMap) {
@@ -556,9 +578,16 @@ export default function MazeFirstPerson() {
       s.maps = [0, 1, 2].map(() =>
         buildSingleMap(cols, rows, [], factory.randomCount, safeMin, safeMax, defaultDoorCount, defaultDoorOpen)
       );
+      // 交替式傳送門：A右下→B右下（B出口在左上）→C左上（C出口在右下）
+      const exitGX = 2 * (cols - 1) + 1, exitGY = 2 * (rows - 1) + 1;
+      s.maps[1].entryGX = exitGX; s.maps[1].entryGY = exitGY;
+      s.maps[1].exitGX  = 1;      s.maps[1].exitGY  = 1;
+      s.maps[2].entryGX = 1;      s.maps[2].entryGY = 1;
+      s.maps[2].exitGX  = exitGX; s.maps[2].exitGY  = exitGY;
       s.currentMapIdx = 0;
       syncCurrentMap(s);
-      s.px = 1.5; s.py = 1.5; s.angle = Math.PI / 4;
+      const spawn0 = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
+      s.px = spawn0.px; s.py = spawn0.py; s.angle = Math.PI / 4;
       setCurrentMapIdx(0);
       setEvents([]);
       setMazeData(null);
@@ -633,6 +662,41 @@ export default function MazeFirstPerson() {
     };
   }, [seed, initMaze]);
 
+  // 確認傳送
+  const confirmTransition = useCallback(() => {
+    const s = g.current;
+    const dir = s.transitionPrompt;
+    if (!dir) return;
+    s.transitionPrompt = null;
+    setTransitionPrompt(null);
+    s.wasOnPortal = true; // 傳送後標記仍在傳送門上，需離開才能再觸發
+    if (dir === 'fwd') {
+      s.currentMapIdx++;
+      syncCurrentMap(s);
+      eventsRef.current = [];
+      setEvents([]);
+      setCurrentMapIdx(s.currentMapIdx);
+      const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
+      s.px = sp.px; s.py = sp.py;
+    } else {
+      s.currentMapIdx--;
+      syncCurrentMap(s);
+      eventsRef.current = [];
+      setEvents([]);
+      setCurrentMapIdx(s.currentMapIdx);
+      const sp = findSafeSpawn(s.grid, s.exitGX, s.exitGY);
+      s.px = sp.px; s.py = sp.py;
+    }
+  }, []);
+
+  // 取消傳送（玩家需離開傳送門才能再次詢問）
+  const cancelTransition = useCallback(() => {
+    const s = g.current;
+    s.transitionPrompt = null;
+    setTransitionPrompt(null);
+    // wasOnPortal 保持 true，確保玩家離開後才能再觸發
+  }, []);
+
   const press = (k, d) => { g.current.keys[k] = d; };
   const DBtn = ({ label, k, code }) => (
     <button
@@ -671,7 +735,7 @@ export default function MazeFirstPerson() {
         {FACTORIES.map(f => (
           <button
             key={f.id}
-            onClick={() => setFactoryMode(f.id)}
+            onClick={() => { setFactoryMode(f.id); setSeed(s => s + 1); }}
             title={f.description}
             style={{
               fontSize: 12, padding: "5px 12px",
@@ -690,8 +754,33 @@ export default function MazeFirstPerson() {
       </div>
 
       {/* ── 畫布 ── */}
-      <div style={{ overflowX: "auto", marginBottom: 10 }}>
+      <div style={{ overflowX: "auto", marginBottom: 10, position: "relative", display: "inline-block" }}>
         <canvas ref={canvasRef} style={{ display: "block", borderRadius: "var(--border-radius-md)", background: "#0d0d1a" }} />
+        {/* ── 地圖切換詢問框 ── */}
+        {transitionPrompt && (
+          <div style={{
+            position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)",
+            background: "rgba(10,10,20,0.92)", border: "0.5px solid var(--color-border-info)",
+            borderRadius: "var(--border-radius-md)", padding: "10px 18px",
+            display: "flex", alignItems: "center", gap: 12, whiteSpace: "nowrap",
+          }}>
+            <span style={{ fontSize: 13, color: "var(--color-text-primary)" }}>
+              {transitionPrompt === 'fwd'
+                ? `前往地圖 ${["B", "C"][g.current.currentMapIdx]}？`
+                : `返回地圖 ${["A", "B"][g.current.currentMapIdx - 1]}？`}
+            </span>
+            <button onClick={confirmTransition} style={{
+              fontSize: 12, padding: "4px 14px", borderRadius: "var(--border-radius-md)",
+              background: "var(--color-background-info)", color: "var(--color-text-info)",
+              border: "0.5px solid var(--color-border-info)", cursor: "pointer", fontWeight: 600,
+            }}>確認</button>
+            <button onClick={cancelTransition} style={{
+              fontSize: 12, padding: "4px 10px", borderRadius: "var(--border-radius-md)",
+              background: "none", color: "var(--color-text-tertiary)",
+              border: "0.5px solid var(--color-border-tertiary)", cursor: "pointer",
+            }}>取消</button>
+          </div>
+        )}
       </div>
 
       {/* ── 多地圖進度指示器 ── */}
