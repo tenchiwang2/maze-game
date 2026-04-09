@@ -3,19 +3,19 @@ import { FOV, NUM_RAYS, MM } from './constants.jsx';
 // ─────────────────────────────────────────────
 //  renderer.js
 //
-//  All Canvas 2D drawing and raycasting.
-//  No React. No maze-generation logic.
+//  所有 Canvas 2D 繪圖與光線投射
+//  不含 React，不含迷宮生成邏輯
 //
-//  Exports:
-//    castRays()            – DDA raycaster
-//    renderFloorCeiling()  – floor casting (ImageData)
-//    renderWalls()         – texture column slicing
-//    getSpriteInfo()       – sprite z-buffer test
-//    drawEntryArch()       – entry portal sprite
-//    drawExitPortal()      – exit portal sprite
-//    drawEventMarker()     – in-world event dot
-//    drawMinimap()         – overlay minimap
-//    drawHUD()             – door-interaction prompt
+//  匯出：
+//    castRays()            – DDA 光線投射器
+//    renderFloorCeiling()  – 地板投射（ImageData）
+//    renderWalls()         – 貼圖欄位切片
+//    getSpriteInfo()       – 精靈 z-buffer 測試
+//    drawEntryArch()       – 入口傳送門精靈
+//    drawExitPortal()      – 出口傳送門精靈
+//    drawEventMarker()     – 世界內事件標記點
+//    drawMinimap()         – 疊加小地圖
+//    drawHUD()             – 門互動提示
 // ─────────────────────────────────────────────
 
 export function castRays(grid, zoneMap, doorMap, px, py, angle, gW, gH) {
@@ -44,7 +44,7 @@ export function castRays(grid, zoneMap, doorMap, px, py, angle, gW, gH) {
     }
     const perpDist = dist * Math.cos(ra - angle);
 
-    // wallX: fractional hit position along the wall face (0-1)
+    // wallX：光線命中牆面的小數位置（0-1）
     let wallX;
     if (side === 0) {
       wallX = py + perpDist * sin;
@@ -52,10 +52,10 @@ export function castRays(grid, zoneMap, doorMap, px, py, angle, gW, gH) {
       wallX = px + perpDist * cos;
     }
     wallX -= Math.floor(wallX);
-    // flip so textures aren't mirrored
+    // 翻轉以避免貼圖鏡像
     if ((side === 0 && cos > 0) || (side === 1 && sin < 0)) wallX = 1 - wallX;
 
-    // zoneId: look at the cell just before the wall in ray direction
+    // zoneId：取光線方向中牆壁前一格的區域
     const prevMx = side === 0 ? hitMx - sX : hitMx;
     const prevMy = side === 0 ? hitMy : hitMy - sY;
     let zoneId = 0;
@@ -68,7 +68,7 @@ export function castRays(grid, zoneMap, doorMap, px, py, angle, gW, gH) {
 }
 
 // ─────────────────────────────────────────────
-//  Floor/ceiling caster  (ImageData-based)
+//  地板/天花板渲染器（基於 ImageData）
 // ─────────────────────────────────────────────
 export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, textures) {
   const imgData = ctx.createImageData(W, H);
@@ -82,7 +82,7 @@ export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, te
 
   for (let y = 0; y < H; y++) {
     const isFloor = y > halfH;
-    const rowCenter = y - halfH;     // positive below, negative above
+    const rowCenter = y - halfH;     // 正值在下方，負值在上方
     if (rowCenter === 0) continue;
 
     const rowDist = halfH / Math.abs(rowCenter);
@@ -92,11 +92,11 @@ export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, te
     let floorY = py + rowDist * rayDirY0;
 
     for (let x = 0; x < W; x++) {
-      // world cell
+      // 世界格子座標
       const cellX = Math.floor(floorX);
       const cellY = Math.floor(floorY);
 
-      // lookup zone at this world coord
+      // 查詢此世界座標的區域
       let zoneId = 0;
       if (cellX >= 0 && cellX < gW && cellY >= 0 && cellY < gH)
         zoneId = zoneMap[cellY][cellX];
@@ -110,19 +110,19 @@ export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, te
         const ty = Math.floor((floorY - cellY) * tex.h) & (tex.h - 1);
         const ti = (ty * tex.w + tx) * 4;
         r = tex.data[ti]; g = tex.data[ti + 1]; b = tex.data[ti + 2];
-        // distance darkening
+        // 距離昏暗效果
         const shade = Math.max(0, 1 - rowDist / 18);
         r = (r * shade) | 0; g = (g * shade) | 0; b = (b * shade) | 0;
       } else {
-        // per-zone fallback solid colour
+        // 每區域備用純色
         const shade = Math.max(0, 1 - rowDist / 18);
-        // zone 0 = corridor; zones 1+ = fixed rooms (each gets a distinct warm tint)
+        // 區域 0 = 走廊；區域 1+ = 固定房間（各有獨特暖色調）
         const roomTints = [
-          null,                    // 0 corridor: use default below
-          [40, 30, 20],              // room 1: warm sandstone
-          [18, 28, 38],              // room 2: cool slate
-          [35, 20, 35],              // room 3: purple stone
-          [20, 35, 20],              // room 4: mossy
+          null,                    // 0 走廊：使用以下預設色
+          [40, 30, 20],              // 房間 1：溫暖砂岩色
+          [18, 28, 38],              // 房間 2：冷色板岩
+          [35, 20, 35],              // 房間 3：紫色石材
+          [20, 35, 20],              // 房間 4：苔蘚色
         ];
         const tint = roomTints[zoneId] || null;
         if (isFloor) {
@@ -145,7 +145,7 @@ export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, te
 }
 
 // ─────────────────────────────────────────────
-//  Wall column renderer  (texture slice or flat)
+//  牆壁欄位渲染器（貼圖切片或平面填色）
 // ─────────────────────────────────────────────
 export function renderWalls(ctx, W, H, rays, textures, doors) {
   const sw = W / NUM_RAYS;
@@ -156,7 +156,7 @@ export function renderWalls(ctx, W, H, rays, textures, doors) {
     const dim = side === 1 ? 0.6 : 1.0;
 
     if (doorRoomIdx >= 0) {
-      // door: use the room's door texture, or fallback to warm brown flat colour
+      // 門：使用房間的門貼圖，或備用暖棕色平面填色
       const door = doors && doors[doorRoomIdx];
       const doorZoneId = door ? door.roomIdx + 1 : 0;
       const tz = textures[doorZoneId] || textures[0];
@@ -179,13 +179,13 @@ export function renderWalls(ctx, W, H, rays, textures, doors) {
 
     if (tex && tex.loaded) {
       const tx = Math.floor(wallX * tex.w) & (tex.w - 1);
-      // draw one vertical strip from the texture
+      // 從貼圖繪製一條垂直條紋
       ctx.drawImage(
         tex.canvas,
         tx, 0, 1, tex.h,
         Math.floor(i * sw), top, Math.ceil(sw) + 1, wh
       );
-      // distance + side darkening overlay
+      // 距離與側面昏暗疊加
       if (dim < 1 || dist > 2) {
         const alpha = Math.min(0.75, (1 - dim) * 0.4 + dist * 0.035);
         ctx.fillStyle = `rgba(0,0,0,${alpha})`;
@@ -200,7 +200,7 @@ export function renderWalls(ctx, W, H, rays, textures, doors) {
 }
 
 // ─────────────────────────────────────────────
-//  Sprite z-buffer  (unchanged)
+//  精靈 z-buffer（未修改）
 // ─────────────────────────────────────────────
 export function getSpriteInfo(wx, wy, px, py, angle, W, rays) {
   const dx = wx - px, dy = wy - py;
@@ -219,7 +219,7 @@ export function getSpriteInfo(wx, wy, px, py, angle, W, rays) {
 }
 
 // ─────────────────────────────────────────────
-//  Portal / event draw helpers  (unchanged)
+//  傳送門 / 事件繪製輔助函式（未修改）
 // ─────────────────────────────────────────────
 export function drawEntryArch(ctx, sx, dist, H) {
   const h = Math.min(H * 2.2, H / dist), top = (H - h) / 2, w = h * 0.55, a = Math.min(1, Math.max(0, 1 - dist / 18));
@@ -254,7 +254,7 @@ export function drawEventMarker(ctx, sx, dist, H, ev, t) {
 }
 
 // ─────────────────────────────────────────────
-//  Minimap  (unchanged)
+//  小地圖（未修改）
 // ─────────────────────────────────────────────
 export function drawMinimap(ctx, walls, cols, rows, px, py, angle, rooms, eCell, xCell, events, doors) {
   const ox = 8, oy = 8, mW = cols * MM, mH = rows * MM;
@@ -295,6 +295,6 @@ export function drawHUD(ctx, W, H, prompt) {
 }
 
 // ─────────────────────────────────────────────
-//  Texture helpers
+//  貼圖輔助函式
 // ─────────────────────────────────────────────
-// Load an image file into a TexInfo object for floor casting (ImageData)
+// 將圖片檔載入 TexInfo 物件，供地板投射（ImageData）使用

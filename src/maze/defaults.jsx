@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────
 //  defaults.js
 //
-//  Default level data and UI option constants.
-//  Swap these out to create a different level.
+//  預設關卡資料與 UI 選項常數
+//  替換此檔案即可建立不同的關卡
 // ─────────────────────────────────────────────
 
 export const DEFAULT_FIXED = [
@@ -26,4 +26,4 @@ export const EVENT_TYPES = ["message","teleport","door","win"];
 export const EVENT_ICONS = { message:"!", teleport:"*", door:"D", win:"★" };
 
 // ─────────────────────────────────────────────
-//  Main component
+//  主元件

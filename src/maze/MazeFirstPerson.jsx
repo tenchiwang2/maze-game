@@ -17,12 +17,12 @@ function loadTexture(file) {
       img.onload = () => {
         const w = img.naturalWidth || TEX_W;
         const h = img.naturalHeight || TEX_H;
-        // offscreen canvas for drawImage wall slicing
+        // 用於 drawImage 牆面切片的離屏 canvas
         const oc = document.createElement('canvas');
         oc.width = w; oc.height = h;
         const octx = oc.getContext('2d');
         octx.drawImage(img, 0, 0);
-        // pixel array for floor casting
+        // 用於地板投射的像素陣列
         const id = octx.getImageData(0, 0, w, h);
         resolve({ loaded: true, canvas: oc, data: id.data, w, h, src: e.target.result });
       };
@@ -33,7 +33,7 @@ function loadTexture(file) {
 }
 
 // ─────────────────────────────────────────────
-//  Texture Upload widget  (single face)
+//  貼圖上傳元件（單一面）
 // ─────────────────────────────────────────────
 function TexUpload({ label, texInfo, onLoad }) {
   return (
@@ -60,7 +60,7 @@ function TexUpload({ label, texInfo, onLoad }) {
 }
 
 // ─────────────────────────────────────────────
-//  Texture zone row  (wall + ceil + floor)
+//  區域貼圖列（牆壁 + 天花板 + 地板）
 // ─────────────────────────────────────────────
 function ZoneTexRow({ label, zone, onChange, accent, showDoor }) {
   return (
@@ -81,7 +81,7 @@ function ZoneTexRow({ label, zone, onChange, accent, showDoor }) {
 }
 
 // ─────────────────────────────────────────────
-//  resolve events helper
+//  解析事件輔助函式
 // ─────────────────────────────────────────────
 function resolveEvents(rooms, fixedRms, globalEvCfg) {
   const out = [];
@@ -102,7 +102,7 @@ function resolveEvents(rooms, fixedRms, globalEvCfg) {
 }
 
 // ─────────────────────────────────────────────
-//  Maze data display panel
+//  迷宮資料顯示面板
 
 function MazeDataPanel({ data, walls }) {
   const [open, setOpen] = useState(false);
@@ -131,24 +131,24 @@ function MazeDataPanel({ data, walls }) {
   const roomTypeColor = (type) =>
     type.startsWith("固定") ? "rgba(216,90,48,0.85)" : "rgba(80,70,160,0.75)";
 
-  // Build wall grid string for "grid view"
+  // 建立平面圖的牆壁字元格子字串
   const renderGrid = () => {
     if (!walls) return null;
     const rows = walls.length, cols = walls[0].length;
     const W = 2 * cols + 1, H = 2 * rows + 1;
     const ch = Array.from({ length: H }, () => Array(W).fill(' '));
-    // borders
+    // 邊框
     for (let c = 0; c < W; c++) { ch[0][c] = '─'; ch[H - 1][c] = '─'; }
     for (let r = 0; r < H; r++) { ch[r][0] = '│'; ch[r][W - 1] = '│'; }
     ch[0][0] = '┌'; ch[0][W - 1] = '┐'; ch[H - 1][0] = '└'; ch[H - 1][W - 1] = '┘';
-    // inner walls
+    // 內部牆壁
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       const gr = 2 * r + 1, gc = 2 * c + 1;
       ch[gr][gc] = '·';
       if (walls[r][c].right && c < cols - 1) ch[gr][gc + 1] = '│';
       if (walls[r][c].bottom && r < rows - 1) ch[gr + 1][gc] = '─';
     }
-    // room markers
+    // 房間標記
     if (data.rooms) {
       data.rooms.forEach((rm, i) => {
         const label = rm.type.startsWith("固定") ? `R${i + 1}` : 'r';
@@ -157,9 +157,9 @@ function MazeDataPanel({ data, walls }) {
         }
       });
     }
-    // entry/exit
+    // 入口/出口
     ch[1][1] = 'S'; ch[2 * (rows - 1) + 1][2 * (cols - 1) + 1] = 'E';
-    // doors
+    // 門
     if (data.doors) data.doors.forEach(d => {
       const gy = d.side === 'bottom' ? 2 * d.r + 2 : 2 * d.r + 1;
       const gx = d.side === 'bottom' ? 2 * d.c + 1 : 2 * d.c + 2;
@@ -192,7 +192,7 @@ function MazeDataPanel({ data, walls }) {
           padding: "12px",
           background: "var(--color-background-primary)",
         }}>
-          {/* Summary row */}
+          {/* 摘要列 */}
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
             {[
               ["地圖大小", `${data.size.cols} × ${data.size.rows}`],
@@ -213,7 +213,7 @@ function MazeDataPanel({ data, walls }) {
             ))}
           </div>
 
-          {/* Tabs */}
+          {/* 分頁標籤 */}
           <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
             {tabBtn("rooms", "房間列表")}
             {tabBtn("doors", "門列表")}
@@ -222,7 +222,7 @@ function MazeDataPanel({ data, walls }) {
             {tabBtn("json", "JSON")}
           </div>
 
-          {/* Tab content */}
+          {/* 分頁內容 */}
           <div style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
 
             {tab === "rooms" && (
@@ -343,7 +343,7 @@ function MazeDataPanel({ data, walls }) {
 }
 
 // ─────────────────────────────────────────────
-//  Default data
+//  預設資料
 
 export default function MazeFirstPerson() {
   const canvasRef = useRef(null);
@@ -359,7 +359,7 @@ export default function MazeFirstPerson() {
   const [won, setWon] = useState(false);
   const [log, setLog] = useState([]);
   const [mazeData, setMazeData] = useState(null);
-  // textures[0]=corridor, textures[N]=fixed room origIdx+1  { wall,ceil,floor,door }
+  // textures[0]=走廊，textures[N]=固定房間 origIdx+1  { wall,ceil,floor,door }
   const [textures, setTextures] = useState([{}, {}, {}, {}]);
   const [defaultDoorCount, setDefaultDoorCount] = useState(2);
   const [defaultDoorOpen, setDefaultDoorOpen] = useState(true);
@@ -442,13 +442,13 @@ export default function MazeFirstPerson() {
     const txs = textureRef.current;
     const rays = castRays(s.grid, s.zoneMap, s.doorMap, s.px, s.py, s.angle, gW, gH);
 
-    // 1. Floor + ceiling (ImageData per-pixel)
+    // 1. 地板 + 天花板（逐像素 ImageData）
     renderFloorCeiling(ctx, W, H, s.px, s.py, s.angle, s.zoneMap, gW, gH, txs);
 
-    // 2. Walls (texture slices or flat colour)
+    // 2. 牆壁（貼圖切片或平面填色）
     renderWalls(ctx, W, H, rays, txs, s.doors);
 
-    // 3. Sprites
+    // 3. 精靈
     const sprites = [
       { type: "entry", wx: s.entryGX + 0.5, wy: s.entryGY + 0.5 },
       { type: "exit", wx: s.exitGX + 0.5, wy: s.exitGY + 0.5 },
@@ -465,7 +465,7 @@ export default function MazeFirstPerson() {
       else drawEventMarker(ctx, info.screenX, info.dist, H, sp.ev, s.t);
     }
 
-    // 4. Minimap + HUD
+    // 4. 小地圖 + HUD
     let nearDoor = null, nearDoorDist = INTERACT_DIST;
     s.doors.forEach(door => {
       const { wx, wy } = doorWorldPos(door);
@@ -495,7 +495,7 @@ export default function MazeFirstPerson() {
     setWon(false); setLog([]);
     setEvents(resolveEvents(rooms, fixedRooms, globalEvCfg));
 
-    // collect maze data for display
+    // 收集迷宮資料供顯示用
     setMazeData({
       size: { cols, rows },
       rooms: rooms.map(rm => ({
@@ -554,7 +554,7 @@ export default function MazeFirstPerson() {
 
   // const typeColor={message:"var(--color-text-primary)",teleport:"var(--color-text-info)",door:"var(--color-text-warning)",win:"var(--color-text-success)"};
 
-  // ── Helpers for event editors ────────────────
+  // ── 事件編輯器輔助函式 ────────────────
   const setRmEvent = (rIdx, ei, patch) => setFixedRooms(p => p.map((x, j) => j === rIdx ? { ...x, events: (x.events || []).map((xe, k) => k === ei ? { ...xe, ...patch } : xe) } : x));
   const delRmEvent = (rIdx, ei) => setFixedRooms(p => p.map((x, j) => j === rIdx ? { ...x, events: (x.events || []).filter((_, k) => k !== ei) } : x));
   const addRmEvent = (rIdx) => setFixedRooms(p => p.map((x, j) => j === rIdx ? { ...x, events: [...(x.events || []), { id: `fr${rIdx}_${Date.now()}`, dr: 0, dc: 0, type: "message", text: "新事件", icon: "!", repeatable: false }] } : x));
@@ -571,14 +571,14 @@ export default function MazeFirstPerson() {
   return (
     <div style={{ padding: "1rem 0", fontFamily: "var(--font-sans)" }}>
 
-      {/* ── Canvas ── */}
+      {/* ── 畫布 ── */}
       <div style={{ overflowX: "auto", marginBottom: 10 }}>
         <canvas ref={canvasRef} style={{ display: "block", borderRadius: "var(--border-radius-md)", background: "#0d0d1a" }} />
       </div>
 
       {won && <div style={{ background: "var(--color-background-success)", color: "var(--color-text-success)", borderRadius: "var(--border-radius-md)", padding: "10px 16px", marginBottom: 10, fontSize: 14, fontWeight: 500 }}>通過出口！</div>}
 
-      {/* ── Controls ── */}
+      {/* ── 操作按鈕 ── */}
       <div style={{ display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,48px)", gridTemplateRows: "repeat(3,48px)", gap: 4 }}>
           <div /><DBtn label="▲" k="ArrowUp" /><div />
@@ -592,7 +592,7 @@ export default function MazeFirstPerson() {
         <button onClick={() => setSeed(s => s + 1)} style={{ marginLeft: "auto", alignSelf: "center" }}>重新開始</button>
       </div>
 
-      {/* ── Map + Room size settings ── */}
+      {/* ── 地圖與房間大小設定 ── */}
       <div style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-lg)", padding: "10px 14px", marginBottom: 14 }}>
         <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.06em" }}>地圖與房間設定</p>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 20px", marginBottom: 8 }}>
@@ -625,7 +625,7 @@ export default function MazeFirstPerson() {
         </div>
       </div>
 
-      {/* ── Texture panel ── */}
+      {/* ── 貼圖面板 ── */}
       <div style={{ marginBottom: 14 }}>
         <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
           貼圖設定（點擊 + 上傳，即時生效）
@@ -655,10 +655,10 @@ export default function MazeFirstPerson() {
         </p>
       </div>
 
-      {/* ── Fixed rooms + events + global events + log ── */}
+      {/* ── 固定房間 + 事件 + 全域事件 + 記錄 ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
 
-        {/* Fixed room editor */}
+        {/* 固定房間編輯器 */}
         <div>
           <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>固定房間</p>
           <div style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-md)", padding: "8px 10px", maxHeight: 280, overflowY: "auto" }}>
@@ -720,7 +720,7 @@ export default function MazeFirstPerson() {
           </div>
         </div>
 
-        {/* Global events + log */}
+        {/* 全域事件 + 記錄 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div>
             <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>全域事件</p>
@@ -759,7 +759,7 @@ export default function MazeFirstPerson() {
 
       </div>
 
-      {/* ── Maze data display ── */}
+      {/* ── 迷宮資料顯示 ── */}
       {mazeData && <MazeDataPanel data={mazeData} walls={g.current.walls} />}
 
     </div>
