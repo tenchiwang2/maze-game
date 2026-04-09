@@ -580,10 +580,14 @@ export default function MazeFirstPerson() {
       );
       // 交替式傳送門：A右下→B右下（B出口在左上）→C左上（C出口在右下）
       const exitGX = 2 * (cols - 1) + 1, exitGY = 2 * (rows - 1) + 1;
-      s.maps[1].entryGX = exitGX; s.maps[1].entryGY = exitGY;
-      s.maps[1].exitGX  = 1;      s.maps[1].exitGY  = 1;
-      s.maps[2].entryGX = 1;      s.maps[2].entryGY = 1;
-      s.maps[2].exitGX  = exitGX; s.maps[2].exitGY  = exitGY;
+      // Map B：入口右下、出口左上（eCell/xCell 供小地圖使用）
+      s.maps[1].entryGX = exitGX;    s.maps[1].entryGY = exitGY;
+      s.maps[1].exitGX  = 1;         s.maps[1].exitGY  = 1;
+      s.maps[1].eCell   = { r: rows - 1, c: cols - 1 };
+      s.maps[1].xCell   = { r: 0, c: 0 };
+      // Map C：入口左上、出口右下（與 A 相同，預設值已正確）
+      s.maps[2].entryGX = 1;         s.maps[2].entryGY = 1;
+      s.maps[2].exitGX  = exitGX;    s.maps[2].exitGY  = exitGY;
       s.currentMapIdx = 0;
       syncCurrentMap(s);
       const spawn0 = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
