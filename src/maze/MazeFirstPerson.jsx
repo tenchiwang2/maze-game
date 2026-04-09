@@ -645,7 +645,7 @@ export default function MazeFirstPerson() {
   useEffect(() => {
     initMaze();
     const canvas = canvasRef.current; if (!canvas) return;
-    canvas.width = Math.min(520, cols * 22 + 4); canvas.height = Math.min(340, rows * 16 + 4);
+    canvas.width = 520; canvas.height = 340;
     cancelAnimationFrame(g.current.animId);
     g.current.animId = requestAnimationFrame(() => renderRef.current?.());
     const onKey = e => {
