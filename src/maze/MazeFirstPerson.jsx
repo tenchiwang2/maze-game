@@ -8,6 +8,7 @@ import {
   drawMinimap, drawHUD,
 } from './renderer.jsx';
 import { DEFAULT_FIXED, DEFAULT_GLOBAL, EVENT_TYPES, EVENT_ICONS } from './defaults.jsx';
+import { FACTORIES, FACTORY_IDS } from './mazeFactory.jsx';
 
 function loadTexture(file) {
   return new Promise(resolve => {
@@ -78,6 +79,34 @@ function ZoneTexRow({ label, zone, onChange, accent, showDoor }) {
       )}
     </div>
   );
+}
+
+// ─────────────────────────────────────────────
+//  單張地圖建立輔助（供多地圖模式使用）
+// ─────────────────────────────────────────────
+function buildSingleMap(cols, rows, fixedRooms, randomCount, safeMin, safeMax, defDoorCount, defDoorOpen) {
+  const { walls, rooms, doorPositions } = generateMaze(cols, rows, fixedRooms, randomCount, safeMin, safeMax, defDoorCount, defDoorOpen);
+  const doors = doorPositions.map(dp => ({ ...dp, closed: dp.defaultOpen === false }));
+  const { grid, zoneMap, doorMap } = buildGrid(walls, cols, rows, rooms, doors);
+  return {
+    walls, rooms, doors, doorMap, grid, zoneMap,
+    eCell: { r: 0, c: 0 },
+    xCell: { r: rows - 1, c: cols - 1 },
+    entryGX: 1, entryGY: 1,
+    exitGX: 2 * (cols - 1) + 1,
+    exitGY: 2 * (rows - 1) + 1,
+    events: [],
+  };
+}
+
+// 將指定地圖快照的資料複製到遊戲狀態 s
+function syncCurrentMap(s) {
+  const map = s.maps[s.currentMapIdx];
+  s.walls = map.walls; s.rooms = map.rooms; s.doors = map.doors;
+  s.doorMap = map.doorMap; s.grid = map.grid; s.zoneMap = map.zoneMap;
+  s.eCell = map.eCell; s.xCell = map.xCell;
+  s.entryGX = map.entryGX; s.entryGY = map.entryGY;
+  s.exitGX = map.exitGX; s.exitGY = map.exitGY;
 }
 
 // ─────────────────────────────────────────────
@@ -363,6 +392,8 @@ export default function MazeFirstPerson() {
   const [textures, setTextures] = useState([{}, {}, {}, {}]);
   const [defaultDoorCount, setDefaultDoorCount] = useState(2);
   const [defaultDoorOpen, setDefaultDoorOpen] = useState(true);
+  const [factoryMode, setFactoryMode] = useState(FACTORY_IDS.CUSTOM);
+  const [currentMapIdx, setCurrentMapIdx] = useState(0);
 
   const g = useRef({
     walls: null, grid: null, zoneMap: null, rooms: [], doors: [],
@@ -372,6 +403,7 @@ export default function MazeFirstPerson() {
     entryGX: 1, entryGY: 1, exitGX: 0, exitGY: 0,
     eCell: { r: 0, c: 0 }, xCell: { r: 0, c: 0 },
     cols, rows, interactCooldown: 0,
+    multiMap: false, maps: [], currentMapIdx: 0, mapTransitionCooldown: 0,
   });
   const renderRef = useRef(null);
   const eventsRef = useRef(events);
@@ -394,6 +426,11 @@ export default function MazeFirstPerson() {
     s.doors = s.doors.map((d, i) => i === idx ? { ...d, closed: !d.closed } : d);
     const { grid, zoneMap, doorMap } = buildGrid(s.walls, s.cols, s.rows, s.rooms, s.doors);
     s.grid = grid; s.zoneMap = zoneMap; s.doorMap = doorMap;
+    // 多地圖：同步回當前地圖快照
+    if (s.multiMap && s.maps[s.currentMapIdx]) {
+      const m = s.maps[s.currentMapIdx];
+      m.doors = s.doors; m.grid = grid; m.zoneMap = zoneMap; m.doorMap = doorMap;
+    }
     setLog(prev => [{ id: Date.now(), type: "door", text: `門已${s.doors[idx].closed ? "關閉" : "開啟"}` }, ...prev].slice(0, 30));
   }
 
@@ -417,9 +454,35 @@ export default function MazeFirstPerson() {
       if (s.keys["ArrowLeft"] || s.keys["a"]) s.angle -= TURN_SPEED;
       if (s.keys["ArrowRight"] || s.keys["d"]) s.angle += TURN_SPEED;
 
-      if (Math.floor(s.px) === s.exitGX && Math.floor(s.py) === s.exitGY) {
-        s.won = true; setWon(true);
+      if (Math.floor(s.px) === s.exitGX && Math.floor(s.py) === s.exitGY && s.mapTransitionCooldown === 0) {
+        if (s.multiMap && s.currentMapIdx < 2) {
+          // 切換至下一張地圖
+          s.currentMapIdx++;
+          syncCurrentMap(s);
+          eventsRef.current = [];
+          setEvents([]);
+          setCurrentMapIdx(s.currentMapIdx);
+          s.px = 1.5; s.py = 1.5;
+          s.mapTransitionCooldown = 90;
+        } else {
+          s.won = true; setWon(true);
+        }
       }
+      // 多地圖：踩到入口 → 回到上一張地圖
+      if (s.multiMap && s.currentMapIdx > 0 && s.mapTransitionCooldown === 0) {
+        if (Math.floor(s.px) === s.entryGX && Math.floor(s.py) === s.entryGY) {
+          s.currentMapIdx--;
+          syncCurrentMap(s);
+          eventsRef.current = [];
+          setEvents([]);
+          setCurrentMapIdx(s.currentMapIdx);
+          // 在前一張地圖出口旁生成，避免立即再觸發
+          s.px = s.exitGX - 1.5; s.py = s.exitGY - 1.5;
+          s.mapTransitionCooldown = 90;
+        }
+      }
+      if (s.mapTransitionCooldown > 0) s.mapTransitionCooldown--;
+
       const mr = Math.round((s.py - 1) / 2), mc = Math.round((s.px - 1) / 2);
       eventsRef.current.forEach((ev, i) => {
         if (ev.triggered && !ev.repeatable) return;
@@ -480,43 +543,75 @@ export default function MazeFirstPerson() {
 
   const initMaze = useCallback(() => {
     const s = g.current; s.cols = cols; s.rows = rows;
-    const eCell = { r: 0, c: 0 }, xCell = { r: rows - 1, c: cols - 1 };
     const safeMin = Math.min(minRoom, maxRoom), safeMax = Math.max(minRoom, maxRoom);
-    const { walls, rooms, doorPositions } = generateMaze(cols, rows, fixedRooms, randomCount, safeMin, safeMax);
-    const doors = doorPositions.map(dp => ({ ...dp, closed: dp.defaultOpen === false }));
-    s.walls = walls; s.rooms = rooms; s.doors = doors;
-    const { grid, zoneMap, doorMap } = buildGrid(walls, cols, rows, rooms, doors);
-    s.grid = grid; s.zoneMap = zoneMap; s.doorMap = doorMap;
-    s.eCell = eCell; s.xCell = xCell;
-    s.entryGX = 1; s.entryGY = 1;
-    s.exitGX = 2 * (cols - 1) + 1; s.exitGY = 2 * (rows - 1) + 1;
-    s.px = 1.5; s.py = 1.5; s.angle = Math.PI / 4;
-    s.won = false; s.t = 0; s.keys = {}; s.interactCooldown = 0;
-    setWon(false); setLog([]);
-    setEvents(resolveEvents(rooms, fixedRooms, globalEvCfg));
+    const factory = FACTORIES.find(f => f.id === factoryMode) || FACTORIES[2];
 
-    // 收集迷宮資料供顯示用
-    setMazeData({
-      size: { cols, rows },
-      rooms: rooms.map(rm => ({
-        type: rm.fixed ? `固定房間 ${rm.origIdx + 1}` : '隨機房間',
-        r: rm.r, c: rm.c, w: rm.w, h: rm.h,
-        area: rm.w * rm.h,
-        events: rm.fixed
-          ? (fixedRooms[rm.origIdx]?.events || []).map(ev => ({ type: ev.type, pos: `△${ev.dr},△${ev.dc}`, text: ev.text }))
-          : [],
-      })),
-      doors: doors.map((d, i) => ({
-        id: i, side: d.side, r: d.r, c: d.c,
-        roomIdx: d.roomIdx,
-      })),
-      globalEvents: resolveEvents(rooms, fixedRooms, globalEvCfg)
-        .filter(ev => !ev.roomLabel)
-        .map(ev => ({ type: ev.type, r: ev.r, c: ev.c, text: ev.text })),
-      entry: { r: 0, c: 0 },
-      exit: { r: rows - 1, c: cols - 1 },
-    });
-  }, [cols, rows, fixedRooms, randomCount, minRoom, maxRoom, defaultDoorCount, defaultDoorOpen, globalEvCfg]);
+    s.won = false; s.t = 0; s.keys = {}; s.interactCooldown = 0;
+    s.mapTransitionCooldown = 0;
+    setWon(false); setLog([]);
+
+    if (factory.multiMap) {
+      // ── 多地圖串聯模式：產生三張獨立迷宮 ──
+      s.multiMap = true;
+      s.maps = [0, 1, 2].map(() =>
+        buildSingleMap(cols, rows, [], factory.randomCount, safeMin, safeMax, defaultDoorCount, defaultDoorOpen)
+      );
+      s.currentMapIdx = 0;
+      syncCurrentMap(s);
+      s.px = 1.5; s.py = 1.5; s.angle = Math.PI / 4;
+      setCurrentMapIdx(0);
+      setEvents([]);
+      setMazeData(null);
+    } else {
+      // ── 單地圖模式 ──
+      s.multiMap = false; s.maps = []; s.currentMapIdx = 0;
+      setCurrentMapIdx(0);
+
+      // 取得工廠設定的房間清單與隨機房間數
+      const activeFixedRooms = factory.id === FACTORY_IDS.CUSTOM
+        ? fixedRooms
+        : factory.getFixedRooms(cols, rows);
+      const activeRandomCount = factory.id === FACTORY_IDS.CUSTOM
+        ? randomCount
+        : factory.randomCount;
+
+      const { walls, rooms, doorPositions } = generateMaze(
+        cols, rows, activeFixedRooms, activeRandomCount, safeMin, safeMax, defaultDoorCount, defaultDoorOpen
+      );
+      const doors = doorPositions.map(dp => ({ ...dp, closed: dp.defaultOpen === false }));
+      s.walls = walls; s.rooms = rooms; s.doors = doors;
+      const { grid, zoneMap, doorMap } = buildGrid(walls, cols, rows, rooms, doors);
+      s.grid = grid; s.zoneMap = zoneMap; s.doorMap = doorMap;
+
+      // 由工廠決定出口格子座標
+      const xCell = factory.getExitCell(rooms, cols, rows);
+      s.eCell = { r: 0, c: 0 }; s.xCell = xCell;
+      s.entryGX = 1; s.entryGY = 1;
+      s.exitGX = 2 * xCell.c + 1; s.exitGY = 2 * xCell.r + 1;
+      s.px = 1.5; s.py = 1.5; s.angle = Math.PI / 4;
+
+      setEvents(resolveEvents(rooms, activeFixedRooms, globalEvCfg));
+
+      // 收集迷宮資料供顯示用
+      setMazeData({
+        size: { cols, rows },
+        rooms: rooms.map(rm => ({
+          type: rm.fixed ? `固定房間 ${rm.origIdx + 1}` : '隨機房間',
+          r: rm.r, c: rm.c, w: rm.w, h: rm.h,
+          area: rm.w * rm.h,
+          events: rm.fixed
+            ? (activeFixedRooms[rm.origIdx]?.events || []).map(ev => ({ type: ev.type, pos: `△${ev.dr},△${ev.dc}`, text: ev.text }))
+            : [],
+        })),
+        doors: doors.map((d, i) => ({ id: i, side: d.side, r: d.r, c: d.c, roomIdx: d.roomIdx })),
+        globalEvents: resolveEvents(rooms, activeFixedRooms, globalEvCfg)
+          .filter(ev => !ev.roomLabel)
+          .map(ev => ({ type: ev.type, r: ev.r, c: ev.c, text: ev.text })),
+        entry: { r: 0, c: 0 },
+        exit: { r: xCell.r, c: xCell.c },
+      });
+    }
+  }, [cols, rows, fixedRooms, randomCount, minRoom, maxRoom, defaultDoorCount, defaultDoorOpen, globalEvCfg, factoryMode]);
 
   useEffect(() => {
     initMaze();
@@ -571,10 +666,61 @@ export default function MazeFirstPerson() {
   return (
     <div style={{ padding: "1rem 0", fontFamily: "var(--font-sans)" }}>
 
+      {/* ── 模式選擇器 ── */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+        {FACTORIES.map(f => (
+          <button
+            key={f.id}
+            onClick={() => setFactoryMode(f.id)}
+            title={f.description}
+            style={{
+              fontSize: 12, padding: "5px 12px",
+              borderRadius: "var(--border-radius-md)",
+              background: factoryMode === f.id ? "var(--color-background-info)" : "var(--color-background-secondary)",
+              color: factoryMode === f.id ? "var(--color-text-info)" : "var(--color-text-secondary)",
+              border: factoryMode === f.id ? "0.5px solid var(--color-border-info)" : "0.5px solid var(--color-border-tertiary)",
+              fontWeight: factoryMode === f.id ? 600 : 400,
+            }}>
+            {f.label}
+          </button>
+        ))}
+        <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", alignSelf: "center", marginLeft: 4 }}>
+          {FACTORIES.find(f => f.id === factoryMode)?.description}
+        </span>
+      </div>
+
       {/* ── 畫布 ── */}
       <div style={{ overflowX: "auto", marginBottom: 10 }}>
         <canvas ref={canvasRef} style={{ display: "block", borderRadius: "var(--border-radius-md)", background: "#0d0d1a" }} />
       </div>
+
+      {/* ── 多地圖進度指示器 ── */}
+      {factoryMode === FACTORY_IDS.MULTI_MAP && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
+          {["A", "B", "C"].map((label, i) => (
+            <div key={label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: "50%",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 13, fontWeight: 600,
+                background: currentMapIdx === i
+                  ? "var(--color-background-info)"
+                  : currentMapIdx > i ? "var(--color-background-success)" : "var(--color-background-secondary)",
+                color: currentMapIdx === i
+                  ? "var(--color-text-info)"
+                  : currentMapIdx > i ? "var(--color-text-success)" : "var(--color-text-tertiary)",
+                border: `0.5px solid ${currentMapIdx === i ? "var(--color-border-info)" : currentMapIdx > i ? "var(--color-border-success)" : "var(--color-border-tertiary)"}`,
+              }}>
+                {label}
+              </div>
+              {i < 2 && <span style={{ color: "var(--color-text-tertiary)", fontSize: 12 }}>→</span>}
+            </div>
+          ))}
+          <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginLeft: 6 }}>
+            {won ? "通關！" : `目前在地圖 ${["A","B","C"][currentMapIdx]}`}
+          </span>
+        </div>
+      )}
 
       {won && <div style={{ background: "var(--color-background-success)", color: "var(--color-text-success)", borderRadius: "var(--border-radius-md)", padding: "10px 16px", marginBottom: 10, fontSize: 14, fontWeight: 500 }}>通過出口！</div>}
 
@@ -658,8 +804,8 @@ export default function MazeFirstPerson() {
       {/* ── 固定房間 + 事件 + 全域事件 + 記錄 ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
 
-        {/* 固定房間編輯器 */}
-        <div>
+        {/* 固定房間編輯器（僅完全自訂模式顯示） */}
+        <div style={{ display: factoryMode === FACTORY_IDS.CUSTOM ? undefined : "none" }}>
           <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>固定房間</p>
           <div style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-md)", padding: "8px 10px", maxHeight: 280, overflowY: "auto" }}>
             {fixedRooms.map((rm, rIdx) => (
@@ -722,7 +868,7 @@ export default function MazeFirstPerson() {
 
         {/* 全域事件 + 記錄 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div>
+          <div style={{ display: factoryMode === FACTORY_IDS.CUSTOM ? undefined : "none" }}>
             <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>全域事件</p>
             <div style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-md)", padding: "6px 8px", maxHeight: 140, overflowY: "auto" }}>
               {globalEvCfg.map((ev, i) => (
