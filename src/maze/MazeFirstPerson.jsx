@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { FOV, NUM_RAYS, MOVE_SPEED, TURN_SPEED, INTERACT_DIST, MM } from './constants.jsx';
-import { generateMaze, buildGrid, doorWorldPos } from './mazeGenerator.jsx';
+import { generateMaze, buildGrid, doorWorldPos, resolveEvents } from './mazeGenerator.jsx';
+import { loadTexture, TexUpload, ZoneTexRow } from './textures.jsx';
 import {
   castRays, renderFloorCeiling, renderWalls,
   getSpriteInfo,
@@ -9,77 +10,6 @@ import {
 } from './renderer.jsx';
 import { DEFAULT_FIXED, DEFAULT_GLOBAL, EVENT_TYPES, EVENT_ICONS } from './defaults.jsx';
 import { FACTORIES, FACTORY_IDS } from './mazeFactory.jsx';
-
-function loadTexture(file) {
-  return new Promise(resolve => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const img = new Image();
-      img.onload = () => {
-        const w = img.naturalWidth || TEX_W;
-        const h = img.naturalHeight || TEX_H;
-        // 用於 drawImage 牆面切片的離屏 canvas
-        const oc = document.createElement('canvas');
-        oc.width = w; oc.height = h;
-        const octx = oc.getContext('2d');
-        octx.drawImage(img, 0, 0);
-        // 用於地板投射的像素陣列
-        const id = octx.getImageData(0, 0, w, h);
-        resolve({ loaded: true, canvas: oc, data: id.data, w, h, src: e.target.result });
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-// ─────────────────────────────────────────────
-//  貼圖上傳元件（單一面）
-// ─────────────────────────────────────────────
-function TexUpload({ label, texInfo, onLoad }) {
-  return (
-    <label style={{
-      display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-      cursor: "pointer", width: 64,
-    }}>
-      <div style={{
-        width: 60, height: 60, border: "0.5px solid var(--color-border-secondary)",
-        borderRadius: "var(--border-radius-md)", overflow: "hidden",
-        background: "var(--color-background-secondary)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
-        {texInfo?.src
-          ? <img src={texInfo.src} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-          : <span style={{ fontSize: 20, color: "var(--color-text-tertiary)" }}>+</span>
-        }
-      </div>
-      <span style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>{label}</span>
-      <input type="file" accept="image/*" style={{ display: "none" }}
-        onChange={e => e.target.files[0] && loadTexture(e.target.files[0]).then(onLoad)} />
-    </label>
-  );
-}
-
-// ─────────────────────────────────────────────
-//  區域貼圖列（牆壁 + 天花板 + 地板）
-// ─────────────────────────────────────────────
-function ZoneTexRow({ label, zone, onChange, accent, showDoor }) {
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 8, padding: "8px 0",
-      borderBottom: "0.5px solid var(--color-border-tertiary)",
-    }}>
-      <div style={{ width: 4, height: 36, borderRadius: 2, background: accent || "#888", flexShrink: 0 }} />
-      <span style={{ fontSize: 12, color: "var(--color-text-secondary)", minWidth: 68, lineHeight: 1.3 }}>{label}</span>
-      <TexUpload label="牆壁" texInfo={zone?.wall} onLoad={t => onChange({ ...zone, wall: t })} />
-      <TexUpload label="天花板" texInfo={zone?.ceil} onLoad={t => onChange({ ...zone, ceil: t })} />
-      <TexUpload label="地板" texInfo={zone?.floor} onLoad={t => onChange({ ...zone, floor: t })} />
-      {showDoor && (
-        <TexUpload label="房間門" texInfo={zone?.door} onLoad={t => onChange({ ...zone, door: t })} />
-      )}
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────
 //  單張地圖建立輔助（供多地圖模式使用）
@@ -125,27 +55,6 @@ function syncCurrentMap(s) {
   s.eCell = map.eCell; s.xCell = map.xCell;
   s.entryGX = map.entryGX; s.entryGY = map.entryGY;
   s.exitGX = map.exitGX; s.exitGY = map.exitGY;
-}
-
-// ─────────────────────────────────────────────
-//  解析事件輔助函式
-// ─────────────────────────────────────────────
-function resolveEvents(rooms, fixedRms, globalEvCfg) {
-  const out = [];
-  fixedRms.forEach((fm, rIdx) => {
-    const placed = rooms.find(r => r.fixed && r.origIdx === rIdx);
-    if (!placed) return;
-    (fm.events || []).forEach(ev => {
-      let destR = ev.destR, destC = ev.destC;
-      if (ev.destRoomIdx != null) {
-        const dp = rooms.find(r => r.fixed && r.origIdx === ev.destRoomIdx);
-        if (dp) { destR = dp.r + (ev.destDr || 0); destC = dp.c + (ev.destDc || 0); }
-      }
-      out.push({ ...ev, r: placed.r + ev.dr, c: placed.c + ev.dc, triggered: false, roomLabel: `房間${rIdx + 1}`, destR, destC });
-    });
-  });
-  globalEvCfg.forEach(ev => out.push({ ...ev, triggered: false }));
-  return out;
 }
 
 // ─────────────────────────────────────────────
@@ -524,13 +433,21 @@ export default function MazeFirstPerson() {
     }
 
     const txs = textureRef.current;
+
+    // 火把閃爍（多頻正弦疊加，利用現有 s.t 計數器）
+    const flicker = 1.0
+      + 0.06 * Math.sin(s.t * 0.27)
+      + 0.04 * Math.sin(s.t * 0.71)
+      + 0.02 * Math.sin(s.t * 1.37);
+    const torchBright = Math.max(0.7, Math.min(1.1, flicker));
+
     const rays = castRays(s.grid, s.zoneMap, s.doorMap, s.px, s.py, s.angle, gW, gH);
 
     // 1. 地板 + 天花板（逐像素 ImageData）
-    renderFloorCeiling(ctx, W, H, s.px, s.py, s.angle, s.zoneMap, gW, gH, txs);
+    renderFloorCeiling(ctx, W, H, s.px, s.py, s.angle, s.zoneMap, gW, gH, txs, torchBright);
 
     // 2. 牆壁（貼圖切片或平面填色）
-    renderWalls(ctx, W, H, rays, txs, s.doors);
+    renderWalls(ctx, W, H, rays, txs, s.doors, torchBright);
 
     // 3. 精靈
     const sprites = [
@@ -556,7 +473,7 @@ export default function MazeFirstPerson() {
       const d = Math.hypot(wx - s.px, wy - s.py);
       if (d < nearDoorDist) { nearDoor = door; nearDoorDist = d; }
     });
-    drawMinimap(ctx, s.walls, s.cols, s.rows, s.px, s.py, s.angle, s.rooms, s.eCell, s.xCell, eventsRef.current, s.doors);
+    drawMinimap(ctx, s.walls, s.cols, s.rows, s.px, s.py, s.angle, s.rooms, s.eCell, s.xCell, eventsRef.current, s.doors, torchBright, s.grid);
     drawHUD(ctx, W, H, nearDoor ? `[E]  ${nearDoor.closed ? "開門" : "關門"}` : null);
 
     s.animId = requestAnimationFrame(() => renderRef.current?.());
@@ -711,11 +628,6 @@ export default function MazeFirstPerson() {
       {label}
     </button>
   );
-
-  // const updateZone = (zoneIdx, newZone) =>
-  //   setTextures(prev => { const n=[...prev]; n[zoneIdx]=newZone; return n; });
-
-  // const typeColor={message:"var(--color-text-primary)",teleport:"var(--color-text-info)",door:"var(--color-text-warning)",win:"var(--color-text-success)"};
 
   // ── 事件編輯器輔助函式 ────────────────
   const setRmEvent = (rIdx, ei, patch) => setFixedRooms(p => p.map((x, j) => j === rIdx ? { ...x, events: (x.events || []).map((xe, k) => k === ei ? { ...xe, ...patch } : xe) } : x));

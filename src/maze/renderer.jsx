@@ -1,4 +1,10 @@
-import { FOV, NUM_RAYS, MM } from './constants.jsx';
+import { FOV, NUM_RAYS, MM, TORCH_RADIUS, AMBIENT } from './constants.jsx';
+
+// 依距離計算亮度（平方衰減），torchBright 含閃爍係數
+function getLit(dist, torchBright) {
+  const t = Math.max(0, 1 - dist / TORCH_RADIUS);
+  return Math.max(AMBIENT, torchBright * t * t);
+}
 
 // ─────────────────────────────────────────────
 //  renderer.js
@@ -70,7 +76,7 @@ export function castRays(grid, zoneMap, doorMap, px, py, angle, gW, gH) {
 // ─────────────────────────────────────────────
 //  地板/天花板渲染器（基於 ImageData）
 // ─────────────────────────────────────────────
-export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, textures) {
+export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, textures, torchBright = 1) {
   const imgData = ctx.createImageData(W, H);
   const buf = imgData.data;
 
@@ -104,35 +110,38 @@ export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, te
       const tz = textures[zoneId] || textures[0];
       const tex = isFloor ? tz?.floor : tz?.ceil;
 
+      // 火把亮度（平方衰減 + 暖色調）
+      const lit = getLit(rowDist, torchBright);
+      const warmR = Math.min(1, lit * 1.25);
+      const warmG = Math.min(1, lit * 1.0);
+      const warmB = Math.min(1, lit * 0.6);
+
       let r, g, b;
       if (tex && tex.loaded) {
         const tx = Math.floor((floorX - cellX) * tex.w) & (tex.w - 1);
         const ty = Math.floor((floorY - cellY) * tex.h) & (tex.h - 1);
         const ti = (ty * tex.w + tx) * 4;
-        r = tex.data[ti]; g = tex.data[ti + 1]; b = tex.data[ti + 2];
-        // 距離昏暗效果
-        const shade = Math.max(0, 1 - rowDist / 18);
-        r = (r * shade) | 0; g = (g * shade) | 0; b = (b * shade) | 0;
+        r = Math.min(255, tex.data[ti]     * warmR) | 0;
+        g = Math.min(255, tex.data[ti + 1] * warmG) | 0;
+        b = Math.min(255, tex.data[ti + 2] * warmB) | 0;
       } else {
         // 每區域備用純色
-        const shade = Math.max(0, 1 - rowDist / 18);
-        // 區域 0 = 走廊；區域 1+ = 固定房間（各有獨特暖色調）
         const roomTints = [
-          null,                    // 0 走廊：使用以下預設色
-          [40, 30, 20],              // 房間 1：溫暖砂岩色
-          [18, 28, 38],              // 房間 2：冷色板岩
-          [35, 20, 35],              // 房間 3：紫色石材
-          [20, 35, 20],              // 房間 4：苔蘚色
+          null,            // 0 走廊：使用以下預設色
+          [40, 30, 20],    // 房間 1：溫暖砂岩色
+          [18, 28, 38],    // 房間 2：冷色板岩
+          [35, 20, 35],    // 房間 3：紫色石材
+          [20, 35, 20],    // 房間 4：苔蘚色
         ];
         const tint = roomTints[zoneId] || null;
         if (isFloor) {
-          r = ((tint ? tint[0] : 20) * shade) | 0;
-          g = ((tint ? tint[1] : 20) * shade) | 0;
-          b = ((tint ? tint[2] : 20) * shade) | 0;
+          r = ((tint ? tint[0] : 20) * warmR) | 0;
+          g = ((tint ? tint[1] : 20) * warmG) | 0;
+          b = ((tint ? tint[2] : 20) * warmB) | 0;
         } else {
-          r = ((tint ? Math.floor(tint[0] * 0.5) : 13) * shade) | 0;
-          g = ((tint ? Math.floor(tint[1] * 0.5) : 13) * shade) | 0;
-          b = ((tint ? Math.floor(tint[2] * 0.5) + 10 : 26) * shade) | 0;
+          r = ((tint ? Math.floor(tint[0] * 0.5) : 13) * warmR) | 0;
+          g = ((tint ? Math.floor(tint[1] * 0.5) : 13) * warmG) | 0;
+          b = ((tint ? Math.floor(tint[2] * 0.5) + 10 : 26) * warmB) | 0;
         }
       }
 
@@ -147,13 +156,20 @@ export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, te
 // ─────────────────────────────────────────────
 //  牆壁欄位渲染器（貼圖切片或平面填色）
 // ─────────────────────────────────────────────
-export function renderWalls(ctx, W, H, rays, textures, doors) {
+export function renderWalls(ctx, W, H, rays, textures, doors, torchBright = 1) {
   const sw = W / NUM_RAYS;
   for (let i = 0; i < NUM_RAYS; i++) {
     const { dist, side, doorRoomIdx, wallX, zoneId } = rays[i];
     const wh = Math.min(H * 3, H / Math.max(0.08, dist));
     const top = (H - wh) / 2;
     const dim = side === 1 ? 0.6 : 1.0;
+    const sx = Math.floor(i * sw);
+    const sw1 = Math.ceil(sw) + 1;
+
+    // 火把亮度（平方衰減 × 側面暗係數）
+    const lit = getLit(dist, torchBright) * dim;
+    const darkAlpha = Math.min(0.97, 1 - lit);
+    const warmAlpha = Math.max(0, (lit - AMBIENT) * 0.22);
 
     if (doorRoomIdx >= 0) {
       // 門：使用房間的門貼圖，或備用暖棕色平面填色
@@ -163,12 +179,12 @@ export function renderWalls(ctx, W, H, rays, textures, doors) {
       const tex = tz?.door;
       if (tex && tex.loaded) {
         const tx = Math.floor(wallX * tex.w) & (tex.w - 1);
-        ctx.drawImage(tex.canvas, tx, 0, 1, tex.h, Math.floor(i * sw), top, Math.ceil(sw) + 1, wh);
-        const alpha = Math.min(0.72, (1 - dim) * 0.45 + dist * 0.032);
-        if (alpha > 0.01) { ctx.fillStyle = `rgba(0,0,0,${alpha})`; ctx.fillRect(Math.floor(i * sw), top, Math.ceil(sw) + 1, wh); }
+        ctx.drawImage(tex.canvas, tx, 0, 1, tex.h, sx, top, sw1, wh);
+        if (warmAlpha > 0.01) { ctx.fillStyle = `rgba(255,130,40,${warmAlpha})`; ctx.fillRect(sx, top, sw1, wh); }
+        if (darkAlpha > 0.01) { ctx.fillStyle = `rgba(0,0,0,${darkAlpha})`; ctx.fillRect(sx, top, sw1, wh); }
       } else {
-        const b = (Math.max(15, 230 - dist * 13) * dim) | 0;
-        ctx.fillStyle = `rgb(${(b * 0.75) | 0},${(b * 0.45) | 0},${(b * 0.15) | 0})`;
+        const bv = Math.max(5, (210 * lit) | 0);
+        ctx.fillStyle = `rgb(${(bv * 0.75) | 0},${(bv * 0.45) | 0},${(bv * 0.15) | 0})`;
         ctx.fillRect(i * sw, top, sw + 0.5, wh);
       }
       continue;
@@ -180,20 +196,14 @@ export function renderWalls(ctx, W, H, rays, textures, doors) {
     if (tex && tex.loaded) {
       const tx = Math.floor(wallX * tex.w) & (tex.w - 1);
       // 從貼圖繪製一條垂直條紋
-      ctx.drawImage(
-        tex.canvas,
-        tx, 0, 1, tex.h,
-        Math.floor(i * sw), top, Math.ceil(sw) + 1, wh
-      );
-      // 距離與側面昏暗疊加
-      if (dim < 1 || dist > 2) {
-        const alpha = Math.min(0.75, (1 - dim) * 0.4 + dist * 0.035);
-        ctx.fillStyle = `rgba(0,0,0,${alpha})`;
-        ctx.fillRect(Math.floor(i * sw), top, Math.ceil(sw) + 1, wh);
-      }
+      ctx.drawImage(tex.canvas, tx, 0, 1, tex.h, sx, top, sw1, wh);
+      // 暖光疊加（橘黃色，近處可見）
+      if (warmAlpha > 0.01) { ctx.fillStyle = `rgba(255,130,40,${warmAlpha})`; ctx.fillRect(sx, top, sw1, wh); }
+      // 黑暗疊加（遠處變暗）
+      if (darkAlpha > 0.01) { ctx.fillStyle = `rgba(0,0,0,${darkAlpha})`; ctx.fillRect(sx, top, sw1, wh); }
     } else {
-      const b = Math.max(15, 230 - dist * 13), bd = (b * dim) | 0;
-      ctx.fillStyle = `rgb(${(bd * 0.4) | 0},${(bd * 0.38) | 0},${bd})`;
+      const bv = Math.max(5, (210 * lit) | 0);
+      ctx.fillStyle = `rgb(${(bv * 0.4) | 0},${(bv * 0.38) | 0},${bv})`;
       ctx.fillRect(i * sw, top, sw + 0.5, wh);
     }
   }
@@ -256,31 +266,73 @@ export function drawEventMarker(ctx, sx, dist, H, ev, t) {
 // ─────────────────────────────────────────────
 //  小地圖（未修改）
 // ─────────────────────────────────────────────
-export function drawMinimap(ctx, walls, cols, rows, px, py, angle, rooms, eCell, xCell, events, doors) {
+export function drawMinimap(ctx, walls, cols, rows, px, py, angle, rooms, eCell, xCell, events, doors, torchBright = 1, grid = null) {
   const ox = 8, oy = 8, mW = cols * MM, mH = rows * MM;
+  const gcx = ox + ((px - 1) / 2) * MM, gcy = oy + ((py - 1) / 2) * MM;
+
+  // 背景框（不受能見遮罩影響）
   ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.beginPath(); ctx.roundRect(ox - 3, oy - 3, mW + 6, mH + 6, 4); ctx.fill();
-  for (let r = 0; r < rows; r++)for (let c = 0; c < cols; c++) { ctx.fillStyle = "#1e1e1e"; ctx.fillRect(ox + c * MM, oy + r * MM, MM, MM); }
+
+  // 能見範圍遮罩：光線追蹤可見多邊形（牆壁遮擋）
+  const visGridR = TORCH_RADIUS * 0.8 * Math.max(0.5, torchBright); // grid 單位
+  const NUM_VIS_RAYS = 120;
+  ctx.save();
+  ctx.beginPath();
+  if (grid) {
+    const gW = grid[0].length, gH = grid.length;
+    const step = 0.25; // grid 單位步長
+    let first = true;
+    for (let i = 0; i < NUM_VIS_RAYS; i++) {
+      const ra = (i / NUM_VIS_RAYS) * Math.PI * 2;
+      const cos = Math.cos(ra), sin = Math.sin(ra);
+      let hitX = px, hitY = py;
+      for (let d = step; d <= visGridR; d += step) {
+        const wx = px + cos * d, wy = py + sin * d;
+        const gx = Math.floor(wx), gy = Math.floor(wy);
+        if (gx < 0 || gx >= gW || gy < 0 || gy >= gH || grid[gy][gx] === 1) break;
+        hitX = wx; hitY = wy;
+      }
+      const cx = ox + ((hitX - 1) / 2) * MM, cy = oy + ((hitY - 1) / 2) * MM;
+      if (first) { ctx.moveTo(cx, cy); first = false; } else ctx.lineTo(cx, cy);
+    }
+    ctx.closePath();
+  } else {
+    // grid 未就緒時退回圓形
+    ctx.arc(gcx, gcy, TORCH_RADIUS * 0.4 * MM * Math.max(0.5, torchBright), 0, Math.PI * 2);
+  }
+  ctx.clip();
+
+  // 地板底色
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { ctx.fillStyle = "#1e1e1e"; ctx.fillRect(ox + c * MM, oy + r * MM, MM, MM); }
+  // 房間填色
   for (const rm of rooms) { ctx.fillStyle = rm.fixed ? "rgba(216,90,48,0.45)" : "rgba(80,70,160,0.4)"; ctx.fillRect(ox + rm.c * MM, oy + rm.r * MM, rm.w * MM, rm.h * MM); }
+  // 牆線
   ctx.lineWidth = 1;
-  for (let r = 0; r < rows; r++)for (let c = 0; c < cols; c++) {
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
     const x = ox + c * MM, y = oy + r * MM; ctx.strokeStyle = "#555";
     if (r === 0) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + MM, y); ctx.stroke(); }
     if (c === 0) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + MM); ctx.stroke(); }
     if (walls[r][c].right) { ctx.beginPath(); ctx.moveTo(x + MM, y); ctx.lineTo(x + MM, y + MM); ctx.stroke(); }
     if (walls[r][c].bottom) { ctx.beginPath(); ctx.moveTo(x, y + MM); ctx.lineTo(x + MM, y + MM); ctx.stroke(); }
   }
+  // 門
   doors.forEach(door => {
     ctx.strokeStyle = door.closed ? "#e87" : "#4d4"; ctx.lineWidth = 2;
     if (door.side === 'bottom') { ctx.beginPath(); ctx.moveTo(ox + door.c * MM, oy + (door.r + 1) * MM); ctx.lineTo(ox + (door.c + 1) * MM, oy + (door.r + 1) * MM); ctx.stroke(); }
     else { ctx.beginPath(); ctx.moveTo(ox + (door.c + 1) * MM, oy + door.r * MM); ctx.lineTo(ox + (door.c + 1) * MM, oy + (door.r + 1) * MM); ctx.stroke(); }
   });
+  // 事件標記
   events.filter(ev => !ev.triggered || ev.repeatable).forEach(ev => {
     ctx.fillStyle = ev.roomLabel ? "rgba(255,180,80,0.9)" : "rgba(140,180,255,0.9)";
     ctx.beginPath(); ctx.arc(ox + ev.c * MM + MM / 2, oy + ev.r * MM + MM / 2, 2.5, 0, Math.PI * 2); ctx.fill();
   });
+  // 入口 / 出口
   ctx.fillStyle = "rgba(50,210,90,0.95)"; ctx.fillRect(ox + eCell.c * MM + 1, oy + eCell.r * MM + 1, MM - 2, MM - 2);
   ctx.fillStyle = "rgba(230,100,20,0.95)"; ctx.fillRect(ox + xCell.c * MM + 1, oy + xCell.r * MM + 1, MM - 2, MM - 2);
-  const gcx = ox + ((px - 1) / 2) * MM, gcy = oy + ((py - 1) / 2) * MM;
+
+  ctx.restore(); // 解除能見遮罩
+
+  // 玩家（永遠可見）
   ctx.fillStyle = "#7F77DD"; ctx.beginPath(); ctx.arc(gcx, gcy, 3, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = "#AFA9EC"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(gcx, gcy); ctx.lineTo(gcx + Math.cos(angle) * 7, gcy + Math.sin(angle) * 7); ctx.stroke();
 }

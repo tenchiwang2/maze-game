@@ -17,3 +17,7 @@ export const TEX_H = 64;
 
 // 小地圖格子像素大小
 export const MM = 5;
+
+// 燈光
+export const TORCH_RADIUS = 8;   // 火把照明半徑（grid 單位）
+export const AMBIENT      = 0.03; // 最低環境亮度（近乎全暗）
