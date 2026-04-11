@@ -19,5 +19,10 @@ export const TEX_H = 64;
 export const MM = 5;
 
 // 燈光
-export const TORCH_RADIUS = 8;   // 火把照明半徑（grid 單位）
-export const AMBIENT      = 0.03; // 最低環境亮度（近乎全暗）
+export const TORCH_RADIUS = 8;   // 火把照明半徑（grid 單位），可被 lightCfg 覆蓋
+export const AMBIENT      = 0.03; // 最低環境亮度（近乎全暗），可被 lightCfg 覆蓋
+
+// 大地圖
+export const WORLD_TILE_SIZE    = 20;   // 每格像素大小
+export const WORLD_MOVE_SPEED   = 0.07; // 每格/幀
+export const ENTRY_PROXIMITY    = 1.4;  // 觸發「進入」提示的距離（格）
