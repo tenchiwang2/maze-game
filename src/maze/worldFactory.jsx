@@ -149,6 +149,49 @@ function placeVolcano(terrain, cols, rows, cx, cy, r) {
   }
 }
 
+// 尋找海岸線附近的可通行格（供港口放置）
+function findCoastalSpot(terrain, cols, rows, rng, minDist, occupied) {
+  const waterSet = new Set([TERRAIN.WATER, TERRAIN.DEEP_WATER]);
+  const blocked  = new Set([TERRAIN.MOUNTAIN, TERRAIN.WATER, TERRAIN.DEEP_WATER, TERRAIN.LAVA]);
+  const coastal  = [];
+  for (let r = 2; r < rows - 2; r++) {
+    for (let c = 2; c < cols - 2; c++) {
+      if (blocked.has(terrain[r][c])) continue;
+      let near = false;
+      outer: for (let dr = -3; dr <= 3; dr++) {
+        for (let dc = -3; dc <= 3; dc++) {
+          const nr = r + dr, nc = c + dc;
+          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && waterSet.has(terrain[nr][nc])) {
+            near = true; break outer;
+          }
+        }
+      }
+      if (near) coastal.push({ wx: c, wy: r });
+    }
+  }
+  for (let i = coastal.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [coastal[i], coastal[j]] = [coastal[j], coastal[i]];
+  }
+  for (const p of coastal) {
+    if (occupied.every(q => Math.hypot(p.wx - q.wx, p.wy - q.wy) >= minDist)) return p;
+  }
+  // 無海岸時退化為任意可通行地
+  return placeAnywhere(terrain, cols, rows, rng,
+    [TERRAIN.PLAINS, TERRAIN.FOREST, TERRAIN.SNOW, TERRAIN.DESERT, TERRAIN.SAVANNA, TERRAIN.SWAMP, TERRAIN.TUNDRA],
+    minDist, occupied);
+}
+
+// 在地圖上放置 3 個港口位置（追加到現有 locations 之後）
+function addPorts(terrain, cols, rows, rng, existingLocs) {
+  const ports = [];
+  for (let i = 0; i < 3; i++) {
+    const p = findCoastalSpot(terrain, cols, rows, rng, 12, [...existingLocs, ...ports]);
+    ports.push(p);
+  }
+  return ports;
+}
+
 // ── 工廠定義 ───────────────────────────────────
 
 export const WORLD_FACTORIES = [
@@ -248,7 +291,8 @@ export const WORLD_FACTORIES = [
       placeRoads(terrain, cols, rows, [L0, L3]);
       placeRoads(terrain, cols, rows, [L0, L5]);
 
-      return { terrain, locations };
+      const ports = addPorts(terrain, cols, rows, rng, locations);
+      return { terrain, locations: [...locations, ...ports] };
     },
   },
 
@@ -292,7 +336,8 @@ export const WORLD_FACTORIES = [
       });
 
       placeRoads(terrain, cols, rows, locations.slice(0, 6));
-      return { terrain, locations };
+      const ports = addPorts(terrain, cols, rows, rng, locations);
+      return { terrain, locations: [...locations, ...ports] };
     },
   },
 
@@ -334,7 +379,8 @@ export const WORLD_FACTORIES = [
       });
 
       placeRoads(terrain, cols, rows, locations);
-      return { terrain, locations };
+      const ports = addPorts(terrain, cols, rows, rng, locations);
+      return { terrain, locations: [...locations, ...ports] };
     },
   },
 
@@ -377,7 +423,8 @@ export const WORLD_FACTORIES = [
       });
 
       placeRoads(terrain, cols, rows, locations);
-      return { terrain, locations };
+      const ports = addPorts(terrain, cols, rows, rng, locations);
+      return { terrain, locations: [...locations, ...ports] };
     },
   },
 
@@ -428,7 +475,8 @@ export const WORLD_FACTORIES = [
       });
 
       placeRoads(terrain, cols, rows, locations);
-      return { terrain, locations };
+      const ports = addPorts(terrain, cols, rows, rng, locations);
+      return { terrain, locations: [...locations, ...ports] };
     },
   },
 
@@ -472,7 +520,8 @@ export const WORLD_FACTORIES = [
       });
 
       placeRoads(terrain, cols, rows, locations);
-      return { terrain, locations };
+      const ports = addPorts(terrain, cols, rows, rng, locations);
+      return { terrain, locations: [...locations, ...ports] };
     },
   },
 
@@ -522,7 +571,8 @@ export const WORLD_FACTORIES = [
       });
 
       placeRoads(terrain, cols, rows, locations);
-      return { terrain, locations };
+      const ports = addPorts(terrain, cols, rows, rng, locations);
+      return { terrain, locations: [...locations, ...ports] };
     },
   },
 
@@ -579,7 +629,8 @@ export const WORLD_FACTORIES = [
       });
 
       placeRoads(terrain, cols, rows, locations);
-      return { terrain, locations };
+      const ports = addPorts(terrain, cols, rows, rng, locations);
+      return { terrain, locations: [...locations, ...ports] };
     },
   },
 ];

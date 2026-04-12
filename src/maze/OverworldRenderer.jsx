@@ -48,6 +48,7 @@ const LOC_COLORS = {
   [LOC_TYPE.DUNGEON]: { bg: '#c03030', border: '#901010', text: '#ffd0d0' },
   [LOC_TYPE.CAPITAL]: { bg: '#ffe060', border: '#c07800', text: '#1a1000' },
   [LOC_TYPE.TEMPLE]:  { bg: '#40a0c0', border: '#207090', text: '#e0f4ff' },
+  [LOC_TYPE.PORT]:    { bg: '#2080c0', border: '#104080', text: '#d0f0ff' },
 };
 
 const LOC_ICONS = {
@@ -57,6 +58,7 @@ const LOC_ICONS = {
   [LOC_TYPE.DUNGEON]: '洞',
   [LOC_TYPE.CAPITAL]: '都',
   [LOC_TYPE.TEMPLE]:  '殿',
+  [LOC_TYPE.PORT]:    '港',
 };
 
 // 國家標籤顏色
@@ -123,6 +125,25 @@ export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc) 
       // 地形裝飾
       drawTerrainDetail(ctx, sx, sy, TS, t);
     }
+  }
+
+  // ── 2a. 港口間的航線（虛線）────────────────
+  const ports = locations.filter(l => l.type === LOC_TYPE.PORT);
+  if (ports.length >= 2) {
+    ctx.save();
+    ctx.setLineDash([5, 7]);
+    ctx.strokeStyle = 'rgba(80,180,255,0.30)';
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < ports.length; i++) {
+      for (let j = i + 1; j < ports.length; j++) {
+        const ax = ports[i].wx * TS - camX + TS / 2;
+        const ay = ports[i].wy * TS - camY + TS / 2;
+        const bx = ports[j].wx * TS - camX + TS / 2;
+        const by = ports[j].wy * TS - camY + TS / 2;
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+      }
+    }
+    ctx.restore();
   }
 
   // ── 2. 地點標記 ──────────────────────────────
@@ -201,14 +222,16 @@ export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc) 
   // ── 4. 靠近地點 HUD ─────────────────────────
   if (nearbyLoc) {
     const isCapital = nearbyLoc.type === LOC_TYPE.CAPITAL;
-    const txt = `[E] 進入 ${nearbyLoc.label}`;
+    const isPort    = nearbyLoc.type === LOC_TYPE.PORT;
+    const verb = isPort ? '乘船出港' : '進入';
+    const txt = `[E] ${verb} ${nearbyLoc.label}`;
     const tw = Math.max(200, txt.length * 9 + 28);
     ctx.fillStyle = 'rgba(0,0,0,0.80)';
     ctx.beginPath(); ctx.roundRect(W / 2 - tw / 2, H - 58, tw, 42, 6); ctx.fill();
-    ctx.strokeStyle = isCapital ? 'rgba(255,200,40,0.9)' : 'rgba(255,220,80,0.7)';
+    ctx.strokeStyle = isPort ? 'rgba(80,200,255,0.9)' : isCapital ? 'rgba(255,200,40,0.9)' : 'rgba(255,220,80,0.7)';
     ctx.lineWidth = isCapital ? 1.5 : 1;
     ctx.stroke();
-    ctx.fillStyle = isCapital ? '#ffe040' : '#ffd040';
+    ctx.fillStyle = isPort ? '#80d8ff' : isCapital ? '#ffe040' : '#ffd040';
     ctx.font = `bold 13px monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';

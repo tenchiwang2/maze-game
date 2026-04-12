@@ -11,7 +11,7 @@ import {
 import { DEFAULT_FIXED, DEFAULT_GLOBAL, EVENT_TYPES, EVENT_ICONS } from './defaults.jsx';
 import { FACTORIES, FACTORY_IDS } from './mazeFactory.jsx';
 // ── RPG 系統 ──
-import { isPassable, findWorldSpawn, getNearbyLocation } from './worldMap.jsx';
+import { isPassable, findWorldSpawn, getNearbyLocation, LOC_TYPE } from './worldMap.jsx';
 import { WORLD_DEF, DIALOGUES, SHOPS, QUEST_DEFS } from './worldData.jsx';
 import { WORLD_FACTORIES, WORLD_FACTORY_IDS } from './worldFactory.jsx';
 import { drawOverworld } from './OverworldRenderer.jsx';
@@ -312,6 +312,84 @@ function MazeDataPanel({ data, walls }) {
 }
 
 // ─────────────────────────────────────────────
+//  港口旅行面板
+
+function PortPanel({ port, locations, onTravel, onClose }) {
+  const dests = locations.filter(l => l.type === LOC_TYPE.PORT && l.id !== port.id);
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,8,20,0.82)',
+    }}>
+      <div style={{
+        background: 'linear-gradient(160deg, rgba(8,24,50,0.98) 0%, rgba(4,16,36,0.98) 100%)',
+        border: '1.5px solid rgba(60,160,230,0.55)',
+        borderRadius: 12,
+        padding: '20px 26px',
+        minWidth: 280,
+        maxWidth: 360,
+        boxShadow: '0 0 32px rgba(40,120,200,0.25)',
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#60c8ff', marginBottom: 4 }}>
+          ⚓ {port.label}
+        </div>
+        <div style={{ fontSize: 11, color: '#4880a0', marginBottom: 16 }}>
+          {port.nationLabel && `[${port.nationLabel}]  `}選擇目的港口出航：
+        </div>
+
+        {dests.length === 0 ? (
+          <div style={{ color: '#405060', fontSize: 12, marginBottom: 12 }}>此港暫無航線</div>
+        ) : dests.map(dest => {
+          const dist = Math.round(Math.hypot(dest.wx - port.wx, dest.wy - port.wy));
+          return (
+            <button
+              key={dest.id}
+              onClick={() => onTravel(dest)}
+              style={{
+                display: 'block', width: '100%', marginBottom: 8,
+                padding: '9px 14px',
+                background: 'rgba(20,55,90,0.75)',
+                border: '1px solid rgba(60,150,220,0.35)',
+                borderRadius: 7,
+                color: '#b8e4ff',
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}>
+              <span style={{ marginRight: 8 }}>⛵</span>
+              {dest.label}
+              {dest.nationLabel && (
+                <span style={{ fontSize: 10, color: '#407090', marginLeft: 8 }}>
+                  [{dest.nationLabel}]
+                </span>
+              )}
+              <span style={{ float: 'right', fontSize: 11, color: '#406070' }}>
+                ~{dist} 海里
+              </span>
+            </button>
+          );
+        })}
+
+        <button
+          onClick={onClose}
+          style={{
+            marginTop: 4, padding: '6px 18px',
+            background: 'none',
+            border: '1px solid rgba(60,90,110,0.6)',
+            borderRadius: 6,
+            color: '#406070',
+            fontSize: 12,
+            cursor: 'pointer',
+          }}>
+          留在港口
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 //  預設資料
 
 export default function MazeFirstPerson() {
@@ -342,6 +420,7 @@ export default function MazeFirstPerson() {
   const [activeShop, setActiveShop]           = useState(null); // shopId
   const [activeCombat, setActiveCombat]       = useState(null); // enemyId
   const [showInventory, setShowInventory]     = useState(false);
+  const [activePort, setActivePort]           = useState(null); // 港口旅行面板
   const [playerStats, setPlayerStats]         = useState(() => createPlayer()); // for re-render trigger
   const [questLog, setQuestLog]               = useState([]);
   const [levelUpMsg, setLevelUpMsg]           = useState('');
@@ -440,6 +519,29 @@ export default function MazeFirstPerson() {
     nearbyLocRef.current = null;
     setNearbyLocation(null);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── 港口海上旅行 ──────────────────────────
+  function doEnterPort(loc) {
+    g.current.uiPaused = true;
+    setActivePort(loc);
+  }
+
+  function doTravelToPort(destLoc) {
+    const s = g.current;
+    const spawn = findWorldSpawn(worldTerrainRef.current, destLoc.wx, destLoc.wy);
+    s.wx = spawn.wx;
+    s.wy = spawn.wy;
+    s.uiPaused = false;
+    nearbyLocRef.current = null;
+    setNearbyLocation(null);
+    setActivePort(null);
+    setLog(prev => [{ id: Date.now(), type: 'message', text: `⚓ 抵達 ${destLoc.label}` }, ...prev].slice(0, 30));
+  }
+
+  function closePort() {
+    g.current.uiPaused = false;
+    setActivePort(null);
+  }
 
   // ── 離開地城，返回大地圖 ───────────────────
   function doExitToOverworld() {
@@ -582,7 +684,8 @@ export default function MazeFirstPerson() {
         if ((s.keys['KeyE'] || s.keys['e']) && s.interactCooldown === 0 && near) {
           s.interactCooldown = 40;
           s.keys['KeyE'] = false; s.keys['e'] = false;
-          doEnterLocation(near);
+          if (near.type === LOC_TYPE.PORT) { doEnterPort(near); }
+          else { doEnterLocation(near); }
           s.animId = requestAnimationFrame(() => renderRef.current?.());
           return;
         }
@@ -1024,6 +1127,16 @@ export default function MazeFirstPerson() {
       {/* ── 畫布 ── */}
       <div style={{ overflowX: "auto", marginBottom: 10, position: "relative", display: "inline-block" }}>
         <canvas ref={canvasRef} style={{ display: "block", borderRadius: "var(--border-radius-md)", background: "#0d0d1a" }} />
+
+        {/* ── 港口旅行面板 ── */}
+        {activePort && (
+          <PortPanel
+            port={activePort}
+            locations={worldLocationsRef.current}
+            onTravel={doTravelToPort}
+            onClose={closePort}
+          />
+        )}
 
         {/* ── RPG 覆蓋面板 ── */}
         {activeDialogue && (

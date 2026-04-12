@@ -25,6 +25,7 @@ export const LOC_TYPE = {
   DUNGEON: 'dungeon',
   CAPITAL: 'capital', // 國家首都
   TEMPLE:  'temple',  // 神殿/遺跡
+  PORT:    'port',    // 港口（海上旅行）
 };
 
 // 保留：手工地圖用

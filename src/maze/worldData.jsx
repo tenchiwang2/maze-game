@@ -282,6 +282,29 @@ export const WORLD_DEF = {
         ],
       },
     },
+    // ── 港口（海上旅行節點）────────────────────
+    {
+      id: 'port_north',
+      type: LOC_TYPE.PORT,
+      wx: 18, wy: 10,
+      label: '北方港',
+      nationLabel: '雪域聯盟',
+    },
+    {
+      id: 'port_west',
+      type: LOC_TYPE.PORT,
+      wx: 10, wy: 32,
+      label: '西海港',
+      nationLabel: '亞薩王國',
+    },
+    {
+      id: 'port_south',
+      type: LOC_TYPE.PORT,
+      wx: 55, wy: 48,
+      label: '南洋港',
+      nationLabel: '沙漠帝國',
+    },
+
     {
       id: 'temple_ancient',
       type: LOC_TYPE.TEMPLE,
