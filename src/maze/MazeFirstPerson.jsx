@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FOV, NUM_RAYS, MOVE_SPEED, TURN_SPEED, INTERACT_DIST, MM } from './constants.jsx';
+import { FOV, NUM_RAYS, MOVE_SPEED, TURN_SPEED, INTERACT_DIST, MM, WORLD_MOVE_SPEED, ENTRY_PROXIMITY, TORCH_RADIUS, AMBIENT } from './constants.jsx';
 import { generateMaze, buildGrid, doorWorldPos, resolveEvents } from './mazeGenerator.jsx';
 import { loadTexture, TexUpload, ZoneTexRow } from './textures.jsx';
 import {
@@ -10,6 +10,18 @@ import {
 } from './renderer.jsx';
 import { DEFAULT_FIXED, DEFAULT_GLOBAL, EVENT_TYPES, EVENT_ICONS } from './defaults.jsx';
 import { FACTORIES, FACTORY_IDS } from './mazeFactory.jsx';
+// ── RPG 系統 ──
+import { buildWorldGrid, isPassable, findWorldSpawn, getNearbyLocation } from './worldMap.jsx';
+import { WORLD_DEF, DIALOGUES, SHOPS, QUEST_DEFS } from './worldData.jsx';
+import { drawOverworld } from './OverworldRenderer.jsx';
+import { createPlayer, gainExp, addItem, recordKill, checkQuestStep } from './playerState.jsx';
+import { rollLoot } from './combatEngine.jsx';
+import { ITEMS } from './itemData.jsx';
+import { ENEMIES } from './enemyData.jsx';
+import DialoguePanel  from './DialoguePanel.jsx';
+import CombatPanel    from './CombatPanel.jsx';
+import ShopPanel      from './ShopPanel.jsx';
+import InventoryPanel from './InventoryPanel.jsx';
 
 // ─────────────────────────────────────────────
 //  單張地圖建立輔助（供多地圖模式使用）
@@ -322,6 +334,21 @@ export default function MazeFirstPerson() {
   const [factoryMode, setFactoryMode] = useState(FACTORY_IDS.CUSTOM);
   const [currentMapIdx, setCurrentMapIdx] = useState(0);
   const [transitionPrompt, setTransitionPrompt] = useState(null); // null | 'fwd' | 'bwd'
+  // ── RPG 狀態 ──
+  const [gameMode, setGameMode] = useState('OVERWORLD'); // 'OVERWORLD' | 'DUNGEON_INTERIOR'
+  const [nearbyLocation, setNearbyLocation]   = useState(null);
+  const [activeDialogue, setActiveDialogue]   = useState(null); // dialogueId
+  const [activeShop, setActiveShop]           = useState(null); // shopId
+  const [activeCombat, setActiveCombat]       = useState(null); // enemyId
+  const [showInventory, setShowInventory]     = useState(false);
+  const [playerStats, setPlayerStats]         = useState(() => createPlayer()); // for re-render trigger
+  const [questLog, setQuestLog]               = useState([]);
+  const [levelUpMsg, setLevelUpMsg]           = useState('');
+
+  const playerRef    = useRef(createPlayer());
+  const nearbyLocRef = useRef(null);
+  // 世界地圖資料（初始化後固定）
+  const worldTerrainRef = useRef(null);
 
   const g = useRef({
     walls: null, grid: null, zoneMap: null, rooms: [], doors: [],
@@ -333,6 +360,15 @@ export default function MazeFirstPerson() {
     cols, rows, interactCooldown: 0,
     multiMap: false, maps: [], currentMapIdx: 0,
     transitionPrompt: null, wasOnPortal: false,
+    // RPG 欄位
+    gameMode: 'OVERWORLD',
+    wx: WORLD_DEF.startX + 0.5,
+    wy: WORLD_DEF.startY + 0.5,
+    returnWX: WORLD_DEF.startX + 0.5,
+    returnWY: WORLD_DEF.startY + 0.5,
+    activeLocationId: null,
+    lightCfg: { ambient: AMBIENT, torchRadius: TORCH_RADIUS },
+    uiPaused: false,
   });
   const renderRef = useRef(null);
   const eventsRef = useRef(events);
@@ -342,12 +378,137 @@ export default function MazeFirstPerson() {
 
 
   function triggerEvent(ev, idx) {
-    setEvents(prev => prev.map((e, i) => i === idx ? { ...e, triggered: true } : e));
+    if (!ev.repeatable) {
+      setEvents(prev => prev.map((e, i) => i === idx ? { ...e, triggered: true } : e));
+    }
     setLog(prev => [{ id: Date.now(), type: ev.type, roomLabel: ev.roomLabel, text: (ev.text || "").split("\n")[0] }, ...prev].slice(0, 30));
+
     if (ev.type === 'teleport' && ev.destR != null) {
       g.current.px = 2 * ev.destC + 1 + 0.5; g.current.py = 2 * ev.destR + 1 + 0.5;
     }
     if (ev.type === 'win' && !g.current.won) { g.current.won = true; setWon(true); }
+
+    // ── RPG 事件 ──
+    if (ev.type === 'npc' && ev.dialogueId) {
+      g.current.uiPaused = true;
+      setActiveDialogue(ev.dialogueId);
+    }
+    if (ev.type === 'shop' && ev.shopId) {
+      g.current.uiPaused = true;
+      setActiveShop(ev.shopId);
+    }
+    if (ev.type === 'combat' && ev.enemyId) {
+      g.current.uiPaused = true;
+      setActiveCombat(ev.enemyId);
+    }
+    if (ev.type === 'chest') {
+      const p = playerRef.current;
+      addItem(p, ev.itemId, ev.qty ?? 1);
+      const itemName = ITEMS[ev.itemId]?.name || ev.itemId;
+      setLog(prev => [{ id: Date.now() + 1, type: 'chest', text: `獲得 ${itemName} ×${ev.qty ?? 1}` }, ...prev].slice(0, 30));
+      setPlayerStats({ ...p });
+      // 任務：collect 進度
+      QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'collect', { itemId: ev.itemId }));
+    }
+    if (ev.type === 'town_gate') {
+      doExitToOverworld();
+    }
+  }
+
+  // ── 離開地城，返回大地圖 ───────────────────
+  function doExitToOverworld() {
+    const s = g.current;
+    s.gameMode = 'OVERWORLD';
+    s.wx = s.returnWX; s.wy = s.returnWY;
+    s.activeLocationId = null;
+    s.won = false; s.grid = null;
+    s.uiPaused = false;
+    s.transitionPrompt = null; s.wasOnPortal = false;
+    setGameMode('OVERWORLD');
+    setWon(false);
+    setTransitionPrompt(null);
+    setActiveDialogue(null);
+    setActiveShop(null);
+    setActiveCombat(null);
+    setShowInventory(false);
+  }
+
+  // ── 進入地點（由大地圖觸發）───────────────
+  function doEnterLocation(loc) {
+    const s = g.current;
+    const cfg = loc.dungeonCfg;
+
+    s.returnWX = s.wx; s.returnWY = s.wy;
+    s.activeLocationId = loc.id;
+    s.lightCfg = {
+      ambient:     cfg.ambient     ?? AMBIENT,
+      torchRadius: cfg.torchRadius ?? TORCH_RADIUS,
+    };
+    s.won = false; s.t = 0; s.keys = {}; s.interactCooldown = 0;
+    s.transitionPrompt = null; s.wasOnPortal = false; s.uiPaused = false;
+    setTransitionPrompt(null); setWon(false); setLog([]);
+
+    const safeMin = cfg.safeMin ?? 2;
+    const safeMax = cfg.safeMax ?? 4;
+
+    if (cfg.multiMap) {
+      const floorCount = cfg.floorCount ?? 3;
+      s.multiMap = true;
+      s.maps = Array.from({ length: floorCount }, () =>
+        buildSingleMap(cfg.cols, cfg.rows, cfg.fixedRooms ?? [], cfg.randomCount ?? 1, safeMin, safeMax, cfg.doorCount ?? 1, cfg.doorOpen ?? true)
+      );
+      const exitGX = 2 * (cfg.cols - 1) + 1;
+      const exitGY = 2 * (cfg.rows - 1) + 1;
+      for (let fi = 1; fi < floorCount; fi++) {
+        if (fi % 2 !== 0) {
+          // 奇數層：入口右下，出口左上
+          s.maps[fi].entryGX = exitGX; s.maps[fi].entryGY = exitGY;
+          s.maps[fi].exitGX  = 1;      s.maps[fi].exitGY  = 1;
+          s.maps[fi].eCell   = { r: cfg.rows - 1, c: cfg.cols - 1 };
+          s.maps[fi].xCell   = { r: 0, c: 0 };
+        } else {
+          // 偶數層：入口左上，出口右下（與第 0 層相同）
+          s.maps[fi].entryGX = 1;      s.maps[fi].entryGY = 1;
+          s.maps[fi].exitGX  = exitGX; s.maps[fi].exitGY  = exitGY;
+          s.maps[fi].eCell   = { r: 0, c: 0 };
+          s.maps[fi].xCell   = { r: cfg.rows - 1, c: cfg.cols - 1 };
+        }
+      }
+      s.currentMapIdx = 0;
+      syncCurrentMap(s);
+      const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
+      s.px = sp.px; s.py = sp.py; s.angle = Math.PI / 4;
+      s.cols = cfg.cols; s.rows = cfg.rows;
+      setCurrentMapIdx(0); setEvents([]); setMazeData(null);
+    } else {
+      s.multiMap = false; s.maps = []; s.currentMapIdx = 0;
+      setCurrentMapIdx(0);
+      const fr = cfg.fixedRooms ?? [];
+      const { walls, rooms, doorPositions } = generateMaze(
+        cfg.cols, cfg.rows, fr, cfg.randomCount ?? 3, safeMin, safeMax, cfg.doorCount ?? 2, cfg.doorOpen ?? true
+      );
+      const doors = doorPositions.map(dp => ({ ...dp, closed: dp.defaultOpen === false }));
+      s.walls = walls; s.rooms = rooms; s.doors = doors;
+      const { grid, zoneMap, doorMap } = buildGrid(walls, cfg.cols, cfg.rows, rooms, doors);
+      s.grid = grid; s.zoneMap = zoneMap; s.doorMap = doorMap;
+      s.cols = cfg.cols; s.rows = cfg.rows;
+      const xCell = { r: cfg.rows - 1, c: cfg.cols - 1 };
+      s.eCell = { r: 0, c: 0 }; s.xCell = xCell;
+      s.entryGX = 1; s.entryGY = 1;
+      s.exitGX = 2 * xCell.c + 1; s.exitGY = 2 * xCell.r + 1;
+      s.px = 1.5; s.py = 1.5; s.angle = Math.PI / 4;
+      setEvents(resolveEvents(rooms, fr, cfg.globalEvents ?? []));
+      setMazeData(null);
+    }
+
+    s.gameMode = 'DUNGEON_INTERIOR';
+    setGameMode('DUNGEON_INTERIOR');
+    setNearbyLocation(null);
+    nearbyLocRef.current = null;
+
+    // 任務進度：reach
+    const p = playerRef.current;
+    QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'reach', { locationId: loc.id }));
   }
 
   function toggleDoor(idx) {
@@ -365,14 +526,52 @@ export default function MazeFirstPerson() {
 
   renderRef.current = () => {
     const canvas = canvasRef.current; if (!canvas) return;
-    const s = g.current; if (!s.grid) return;
+    const s = g.current;
     const ctx = canvas.getContext("2d");
     const W = canvas.width, H = canvas.height;
-    const gW = s.grid[0].length, gH = s.grid.length;
     s.t++;
     if (s.interactCooldown > 0) s.interactCooldown--;
 
-    if (!s.won) {
+    // ── 大地圖模式 ────────────────────────────
+    if (s.gameMode === 'OVERWORLD') {
+      const terrain = worldTerrainRef.current;
+      if (!terrain) { s.animId = requestAnimationFrame(() => renderRef.current?.()); return; }
+
+      if (!s.uiPaused) {
+        const spd = WORLD_MOVE_SPEED;
+        const dx = (s.keys['d'] || s.keys['ArrowRight'] ? spd : 0) - (s.keys['a'] || s.keys['ArrowLeft'] ? spd : 0);
+        const dy = (s.keys['s'] || s.keys['ArrowDown']  ? spd : 0) - (s.keys['w'] || s.keys['ArrowUp']   ? spd : 0);
+        const nx = s.wx + dx, ny = s.wy + dy;
+        if (isPassable(terrain, nx, s.wy)) s.wx = nx;
+        if (isPassable(terrain, s.wx, ny)) s.wy = ny;
+
+        // 靠近地點偵測
+        const near = getNearbyLocation(WORLD_DEF.locations, s.wx, s.wy, ENTRY_PROXIMITY);
+        if (near?.id !== nearbyLocRef.current?.id) {
+          nearbyLocRef.current = near;
+          setNearbyLocation(near);
+        }
+
+        // E 鍵進入地點
+        if ((s.keys['KeyE'] || s.keys['e']) && s.interactCooldown === 0 && near) {
+          s.interactCooldown = 40;
+          s.keys['KeyE'] = false; s.keys['e'] = false;
+          doEnterLocation(near);
+          s.animId = requestAnimationFrame(() => renderRef.current?.());
+          return;
+        }
+      }
+
+      drawOverworld(ctx, W, H, terrain, WORLD_DEF.locations, s.wx, s.wy, nearbyLocRef.current);
+      s.animId = requestAnimationFrame(() => renderRef.current?.());
+      return;
+    }
+
+    // ── 地城內部模式 ──────────────────────────
+    if (!s.grid) { s.animId = requestAnimationFrame(() => renderRef.current?.()); return; }
+    const gW = s.grid[0].length, gH = s.grid.length;
+
+    if (!s.won && !s.uiPaused) {
       const cos = Math.cos(s.angle), sin = Math.sin(s.angle);
       const mv = (nx, ny) => {
         if (s.grid[Math.floor(s.py)][Math.floor(nx)] === 0) s.px = nx;
@@ -399,10 +598,17 @@ export default function MazeFirstPerson() {
       // 首次踩上傳送門時顯示詢問框
       if (!s.wasOnPortal && !s.transitionPrompt) {
         if (onExitPortal) {
-          if (s.multiMap && s.currentMapIdx < 2) {
+          if (s.multiMap && s.currentMapIdx < s.maps.length - 1) {
+            // 多層：前往下一層
             s.transitionPrompt = 'fwd';
             setTransitionPrompt('fwd');
+          } else if (s.gameMode === 'DUNGEON_INTERIOR') {
+            // RPG 模式：出口 → 返回大地圖
+            doExitToOverworld();
+            s.animId = requestAnimationFrame(() => renderRef.current?.());
+            return;
           } else {
+            // 舊的「迷宮遊戲」模式
             s.won = true; setWon(true);
           }
           s.wasOnPortal = true;
@@ -411,6 +617,14 @@ export default function MazeFirstPerson() {
           setTransitionPrompt('bwd');
           s.wasOnPortal = true;
         }
+      }
+
+      // I 鍵開啟背包
+      if ((s.keys['KeyI'] || s.keys['i']) && s.interactCooldown === 0) {
+        s.keys['KeyI'] = false; s.keys['i'] = false;
+        s.interactCooldown = 30;
+        s.uiPaused = true;
+        setShowInventory(true);
       }
 
       const mr = Math.round((s.py - 1) / 2), mc = Math.round((s.px - 1) / 2);
@@ -441,13 +655,14 @@ export default function MazeFirstPerson() {
       + 0.02 * Math.sin(s.t * 1.37);
     const torchBright = Math.max(0.7, Math.min(1.1, flicker));
 
+    const lightCfg = s.lightCfg || {};
     const rays = castRays(s.grid, s.zoneMap, s.doorMap, s.px, s.py, s.angle, gW, gH);
 
     // 1. 地板 + 天花板（逐像素 ImageData）
-    renderFloorCeiling(ctx, W, H, s.px, s.py, s.angle, s.zoneMap, gW, gH, txs, torchBright);
+    renderFloorCeiling(ctx, W, H, s.px, s.py, s.angle, s.zoneMap, gW, gH, txs, torchBright, lightCfg);
 
     // 2. 牆壁（貼圖切片或平面填色）
-    renderWalls(ctx, W, H, rays, txs, s.doors, torchBright);
+    renderWalls(ctx, W, H, rays, txs, s.doors, torchBright, lightCfg);
 
     // 3. 精靈
     const sprites = [
@@ -473,7 +688,7 @@ export default function MazeFirstPerson() {
       const d = Math.hypot(wx - s.px, wy - s.py);
       if (d < nearDoorDist) { nearDoor = door; nearDoorDist = d; }
     });
-    drawMinimap(ctx, s.walls, s.cols, s.rows, s.px, s.py, s.angle, s.rooms, s.eCell, s.xCell, eventsRef.current, s.doors, torchBright, s.grid);
+    drawMinimap(ctx, s.walls, s.cols, s.rows, s.px, s.py, s.angle, s.rooms, s.eCell, s.xCell, eventsRef.current, s.doors, torchBright, s.grid, lightCfg);
     drawHUD(ctx, W, H, nearDoor ? `[E]  ${nearDoor.closed ? "開門" : "關門"}` : null);
 
     s.animId = requestAnimationFrame(() => renderRef.current?.());
@@ -564,7 +779,14 @@ export default function MazeFirstPerson() {
   }, [cols, rows, fixedRooms, randomCount, minRoom, maxRoom, defaultDoorCount, defaultDoorOpen, globalEvCfg, factoryMode]);
 
   useEffect(() => {
-    initMaze();
+    // 初始化世界地圖地形（只需一次）
+    if (!worldTerrainRef.current) {
+      worldTerrainRef.current = buildWorldGrid(WORLD_DEF);
+      const spawn = findWorldSpawn(worldTerrainRef.current, WORLD_DEF.startX, WORLD_DEF.startY);
+      g.current.wx = spawn.wx; g.current.wy = spawn.wy;
+      g.current.returnWX = spawn.wx; g.current.returnWY = spawn.wy;
+    }
+
     const canvas = canvasRef.current; if (!canvas) return;
     canvas.width = 520; canvas.height = 340;
     cancelAnimationFrame(g.current.animId);
@@ -581,29 +803,46 @@ export default function MazeFirstPerson() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKey);
     };
-  }, [seed, initMaze]);
+  }, []);
 
-  // 確認傳送
+  // 迷宮編輯器模式：seed 變化時重新初始化並切換至地城視角
+  useEffect(() => {
+    if (seed === 0) return; // 初次掛載不執行（保留大地圖模式）
+    initMaze();
+    g.current.gameMode = 'DUNGEON_INTERIOR';
+    g.current.lightCfg = { ambient: AMBIENT, torchRadius: TORCH_RADIUS };
+    setGameMode('DUNGEON_INTERIOR');
+  }, [seed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 確認傳送（支援多層高塔 / 多地圖）
   const confirmTransition = useCallback(() => {
     const s = g.current;
     const dir = s.transitionPrompt;
     if (!dir) return;
     s.transitionPrompt = null;
     setTransitionPrompt(null);
-    s.wasOnPortal = true; // 傳送後標記仍在傳送門上，需離開才能再觸發
+    s.wasOnPortal = true;
     if (dir === 'fwd') {
       s.currentMapIdx++;
+      // 若已是最後一層 → 返回大地圖
+      if (s.currentMapIdx >= s.maps.length) {
+        doExitToOverworld();
+        return;
+      }
       syncCurrentMap(s);
-      eventsRef.current = [];
-      setEvents([]);
+      eventsRef.current = []; setEvents([]);
       setCurrentMapIdx(s.currentMapIdx);
       const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
       s.px = sp.px; s.py = sp.py;
     } else {
       s.currentMapIdx--;
+      if (s.currentMapIdx < 0) {
+        // 回到地城入口 → 返回大地圖
+        doExitToOverworld();
+        return;
+      }
       syncCurrentMap(s);
-      eventsRef.current = [];
-      setEvents([]);
+      eventsRef.current = []; setEvents([]);
       setCurrentMapIdx(s.currentMapIdx);
       const sp = findSafeSpawn(s.grid, s.exitGX, s.exitGY);
       s.px = sp.px; s.py = sp.py;
@@ -643,6 +882,40 @@ export default function MazeFirstPerson() {
   const typeColor = { message: "var(--color-text-primary)", teleport: "var(--color-text-info)", door: "var(--color-text-warning)", win: "var(--color-text-success)" };
   const safeMin = Math.min(minRoom, maxRoom), safeMax = Math.max(minRoom, maxRoom);
 
+  // ── UI 面板關閉回呼 ──
+  function closeDialogue()  { setActiveDialogue(null); g.current.uiPaused = false; g.current.interactCooldown = 60; }
+  function closeShop()      { setActiveShop(null);     g.current.uiPaused = false; g.current.interactCooldown = 60; }
+  function closeInventory() { setShowInventory(false); g.current.uiPaused = false; g.current.interactCooldown = 30; }
+
+  function closeCombat(result) {
+    setActiveCombat(null);
+    g.current.uiPaused = false;
+    g.current.interactCooldown = 80;
+    const p = playerRef.current;
+
+    if (result?.won) {
+      // 發放經驗值與掉落
+      result.loot?.forEach(l => addItem(p, l.itemId, l.qty));
+      if (result.exp) {
+        const { leveled, messages } = gainExp(p, result.exp);
+        if (leveled) { setLevelUpMsg(messages[0] || '升等！'); setTimeout(() => setLevelUpMsg(''), 3000); }
+      }
+      // 任務：kill 進度
+      const enemyId = activeCombat; // captured in closure
+      recordKill(p, enemyId);
+      QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'kill', { enemyId }));
+    }
+    if (!result?.won && !result?.fled) {
+      // 被打倒：傳回起點
+      const s = g.current;
+      p.hp = Math.max(1, Math.floor(p.maxHp * 0.3)); // 殘血復活
+      const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
+      s.px = sp.px; s.py = sp.py;
+    }
+    setPlayerStats({ ...p });
+    setQuestLog(p.quests.map(q => ({ ...q })));
+  }
+
   return (
     <div style={{ padding: "1rem 0", fontFamily: "var(--font-sans)" }}>
 
@@ -669,9 +942,67 @@ export default function MazeFirstPerson() {
         </span>
       </div>
 
+      {/* ── 大地圖模式按鈕 ── */}
+      {gameMode === 'DUNGEON_INTERIOR' && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+          <button onClick={doExitToOverworld} style={{ fontSize: 12, padding: "4px 12px" }}>← 返回大地圖</button>
+          <span style={{ fontSize: 12, color: "var(--color-text-tertiary)" }}>
+            📍 {WORLD_DEF.locations.find(l => l.id === g.current.activeLocationId)?.label || '地城'}
+          </span>
+          {/* 玩家狀態列 */}
+          <div style={{ marginLeft: "auto", display: "flex", gap: 12, fontSize: 12 }}>
+            <span style={{ color: "#ff8888" }}>❤ {playerStats.hp}/{playerStats.maxHp}</span>
+            <span style={{ color: "#88aaff" }}>💧 {playerStats.mp}/{playerStats.maxMp}</span>
+            <span style={{ color: "#ffd060" }}>💰 {playerStats.gold}</span>
+            <span style={{ color: "#aaffaa" }}>Lv.{playerStats.lv}</span>
+          </div>
+        </div>
+      )}
+
       {/* ── 畫布 ── */}
       <div style={{ overflowX: "auto", marginBottom: 10, position: "relative", display: "inline-block" }}>
         <canvas ref={canvasRef} style={{ display: "block", borderRadius: "var(--border-radius-md)", background: "#0d0d1a" }} />
+
+        {/* ── RPG 覆蓋面板 ── */}
+        {activeDialogue && (
+          <DialoguePanel
+            lines={DIALOGUES[activeDialogue] || []}
+            onClose={closeDialogue}
+          />
+        )}
+        {activeShop && (
+          <ShopPanel
+            shopDef={SHOPS[activeShop]}
+            player={playerRef.current}
+            onClose={closeShop}
+            onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
+          />
+        )}
+        {activeCombat && (
+          <CombatPanel
+            enemyId={activeCombat}
+            player={playerRef.current}
+            onCombatEnd={closeCombat}
+          />
+        )}
+        {showInventory && (
+          <InventoryPanel
+            player={playerRef.current}
+            onClose={closeInventory}
+            onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
+          />
+        )}
+
+        {/* 升等提示 */}
+        {levelUpMsg && (
+          <div style={{
+            position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)",
+            background: "rgba(255,220,40,0.95)", color: "#3a2000", fontWeight: 700,
+            fontSize: 14, padding: "8px 20px", borderRadius: 8, whiteSpace: "nowrap",
+            boxShadow: "0 0 16px rgba(255,200,0,0.6)",
+          }}>{levelUpMsg}</div>
+        )}
+
         {/* ── 地圖切換詢問框 ── */}
         {transitionPrompt && (
           <div style={{
@@ -682,8 +1013,12 @@ export default function MazeFirstPerson() {
           }}>
             <span style={{ fontSize: 13, color: "var(--color-text-primary)" }}>
               {transitionPrompt === 'fwd'
-                ? `前往地圖 ${["B", "C"][g.current.currentMapIdx]}？`
-                : `返回地圖 ${["A", "B"][g.current.currentMapIdx - 1]}？`}
+                ? (g.current.gameMode === 'DUNGEON_INTERIOR'
+                    ? `前往第 ${g.current.currentMapIdx + 2} 層？`
+                    : `前往地圖 ${["B", "C"][g.current.currentMapIdx]}？`)
+                : (g.current.gameMode === 'DUNGEON_INTERIOR'
+                    ? (g.current.currentMapIdx <= 1 ? `返回地面？` : `返回第 ${g.current.currentMapIdx} 層？`)
+                    : `返回地圖 ${["A", "B"][g.current.currentMapIdx - 1]}？`)}
             </span>
             <button onClick={confirmTransition} style={{
               fontSize: 12, padding: "4px 14px", borderRadius: "var(--border-radius-md)",
@@ -910,8 +1245,35 @@ export default function MazeFirstPerson() {
 
       </div>
 
-      {/* ── 迷宮資料顯示 ── */}
-      {mazeData && <MazeDataPanel data={mazeData} walls={g.current.walls} />}
+      {/* ── 任務記錄（地城模式才顯示）── */}
+      {gameMode === 'DUNGEON_INTERIOR' && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>任務記錄</p>
+          <div style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-md)", padding: "8px 12px", minHeight: 40 }}>
+            {questLog.length === 0 && <p style={{ fontSize: 12, color: "var(--color-text-tertiary)", margin: 0 }}>尚未接受任何任務</p>}
+            {questLog.map(q => {
+              const def = QUEST_DEFS.find(d => d.id === q.questId);
+              if (!def) return null;
+              const step = def.steps[q.stepIdx];
+              return (
+                <div key={q.questId} style={{ fontSize: 12, padding: "4px 0", borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
+                  <span style={{ fontWeight: 500, color: q.completed ? "var(--color-text-success)" : "var(--color-text-primary)" }}>
+                    {q.completed ? "✓ " : "◎ "}{def.title}
+                  </span>
+                  {!q.completed && step && (
+                    <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginLeft: 8 }}>
+                      → {step.desc}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── 迷宮資料顯示（舊工具模式）── */}
+      {gameMode !== 'DUNGEON_INTERIOR' && mazeData && <MazeDataPanel data={mazeData} walls={g.current.walls} />}
 
     </div>
   );

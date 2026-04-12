@@ -1,9 +1,10 @@
 import { FOV, NUM_RAYS, MM, TORCH_RADIUS, AMBIENT } from './constants.jsx';
 
 // 依距離計算亮度（平方衰減），torchBright 含閃爍係數
-function getLit(dist, torchBright) {
-  const t = Math.max(0, 1 - dist / TORCH_RADIUS);
-  return Math.max(AMBIENT, torchBright * t * t);
+// lightCfg 可覆蓋模組預設值（供各地城不同光源）
+function getLit(dist, torchBright, torchRadius = TORCH_RADIUS, ambient = AMBIENT) {
+  const t = Math.max(0, 1 - dist / torchRadius);
+  return Math.max(ambient, torchBright * t * t);
 }
 
 // ─────────────────────────────────────────────
@@ -76,7 +77,9 @@ export function castRays(grid, zoneMap, doorMap, px, py, angle, gW, gH) {
 // ─────────────────────────────────────────────
 //  地板/天花板渲染器（基於 ImageData）
 // ─────────────────────────────────────────────
-export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, textures, torchBright = 1) {
+export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, textures, torchBright = 1, lightCfg = {}) {
+  const torchRadius = lightCfg.torchRadius ?? TORCH_RADIUS;
+  const ambient     = lightCfg.ambient     ?? AMBIENT;
   const imgData = ctx.createImageData(W, H);
   const buf = imgData.data;
 
@@ -111,7 +114,7 @@ export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, te
       const tex = isFloor ? tz?.floor : tz?.ceil;
 
       // 火把亮度（平方衰減 + 暖色調）
-      const lit = getLit(rowDist, torchBright);
+      const lit = getLit(rowDist, torchBright, torchRadius, ambient);
       const warmR = Math.min(1, lit * 1.25);
       const warmG = Math.min(1, lit * 1.0);
       const warmB = Math.min(1, lit * 0.6);
@@ -156,7 +159,9 @@ export function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, te
 // ─────────────────────────────────────────────
 //  牆壁欄位渲染器（貼圖切片或平面填色）
 // ─────────────────────────────────────────────
-export function renderWalls(ctx, W, H, rays, textures, doors, torchBright = 1) {
+export function renderWalls(ctx, W, H, rays, textures, doors, torchBright = 1, lightCfg = {}) {
+  const torchRadius = lightCfg.torchRadius ?? TORCH_RADIUS;
+  const ambient     = lightCfg.ambient     ?? AMBIENT;
   const sw = W / NUM_RAYS;
   for (let i = 0; i < NUM_RAYS; i++) {
     const { dist, side, doorRoomIdx, wallX, zoneId } = rays[i];
@@ -167,9 +172,9 @@ export function renderWalls(ctx, W, H, rays, textures, doors, torchBright = 1) {
     const sw1 = Math.ceil(sw) + 1;
 
     // 火把亮度（平方衰減 × 側面暗係數）
-    const lit = getLit(dist, torchBright) * dim;
+    const lit = getLit(dist, torchBright, torchRadius, ambient) * dim;
     const darkAlpha = Math.min(0.97, 1 - lit);
-    const warmAlpha = Math.max(0, (lit - AMBIENT) * 0.22);
+    const warmAlpha = Math.max(0, (lit - ambient) * 0.22);
 
     if (doorRoomIdx >= 0) {
       // 門：使用房間的門貼圖，或備用暖棕色平面填色
@@ -266,7 +271,8 @@ export function drawEventMarker(ctx, sx, dist, H, ev, t) {
 // ─────────────────────────────────────────────
 //  小地圖（未修改）
 // ─────────────────────────────────────────────
-export function drawMinimap(ctx, walls, cols, rows, px, py, angle, rooms, eCell, xCell, events, doors, torchBright = 1, grid = null) {
+export function drawMinimap(ctx, walls, cols, rows, px, py, angle, rooms, eCell, xCell, events, doors, torchBright = 1, grid = null, lightCfg = {}) {
+  const torchRadius = lightCfg.torchRadius ?? TORCH_RADIUS;
   const ox = 8, oy = 8, mW = cols * MM, mH = rows * MM;
   const gcx = ox + ((px - 1) / 2) * MM, gcy = oy + ((py - 1) / 2) * MM;
 
@@ -274,7 +280,7 @@ export function drawMinimap(ctx, walls, cols, rows, px, py, angle, rooms, eCell,
   ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.beginPath(); ctx.roundRect(ox - 3, oy - 3, mW + 6, mH + 6, 4); ctx.fill();
 
   // 能見範圍遮罩：光線追蹤可見多邊形（牆壁遮擋）
-  const visGridR = TORCH_RADIUS * 0.8 * Math.max(0.5, torchBright); // grid 單位
+  const visGridR = torchRadius * 0.8 * Math.max(0.5, torchBright); // grid 單位
   const NUM_VIS_RAYS = 120;
   ctx.save();
   ctx.beginPath();
@@ -298,7 +304,7 @@ export function drawMinimap(ctx, walls, cols, rows, px, py, angle, rooms, eCell,
     ctx.closePath();
   } else {
     // grid 未就緒時退回圓形
-    ctx.arc(gcx, gcy, TORCH_RADIUS * 0.4 * MM * Math.max(0.5, torchBright), 0, Math.PI * 2);
+    ctx.arc(gcx, gcy, torchRadius * 0.4 * MM * Math.max(0.5, torchBright), 0, Math.PI * 2);
   }
   ctx.clip();
 
