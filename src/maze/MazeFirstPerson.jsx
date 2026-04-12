@@ -11,8 +11,9 @@ import {
 import { DEFAULT_FIXED, DEFAULT_GLOBAL, EVENT_TYPES, EVENT_ICONS } from './defaults.jsx';
 import { FACTORIES, FACTORY_IDS } from './mazeFactory.jsx';
 // ── RPG 系統 ──
-import { buildWorldGrid, isPassable, findWorldSpawn, getNearbyLocation } from './worldMap.jsx';
+import { isPassable, findWorldSpawn, getNearbyLocation } from './worldMap.jsx';
 import { WORLD_DEF, DIALOGUES, SHOPS, QUEST_DEFS } from './worldData.jsx';
+import { WORLD_FACTORIES, WORLD_FACTORY_IDS } from './worldFactory.jsx';
 import { drawOverworld } from './OverworldRenderer.jsx';
 import { createPlayer, gainExp, addItem, recordKill, checkQuestStep } from './playerState.jsx';
 import { rollLoot } from './combatEngine.jsx';
@@ -345,10 +346,15 @@ export default function MazeFirstPerson() {
   const [questLog, setQuestLog]               = useState([]);
   const [levelUpMsg, setLevelUpMsg]           = useState('');
 
-  const playerRef    = useRef(createPlayer());
-  const nearbyLocRef = useRef(null);
-  // 世界地圖資料（初始化後固定）
+  // ── 世界地圖工廠 ──
+  const [worldFactoryId, setWorldFactoryId] = useState(WORLD_FACTORY_IDS.GRAND_WORLD);
+  const [worldSeed, setWorldSeed]           = useState(1);
+
+  const playerRef       = useRef(createPlayer());
+  const nearbyLocRef    = useRef(null);
   const worldTerrainRef = useRef(null);
+  // 當前世界地點（含工廠產生的隨機位置）
+  const worldLocationsRef = useRef(WORLD_DEF.locations);
 
   const g = useRef({
     walls: null, grid: null, zoneMap: null, rooms: [], doors: [],
@@ -414,6 +420,26 @@ export default function MazeFirstPerson() {
       doExitToOverworld();
     }
   }
+
+  // ── 世界地圖重新產生 ──────────────────────
+  const regenerateWorld = useCallback((factoryId, seed) => {
+    const factory = WORLD_FACTORIES.find(f => f.id === factoryId) ?? WORLD_FACTORIES[0];
+    const { terrain, locations: locs } = factory.generate(seed, WORLD_DEF.cols, WORLD_DEF.rows);
+    // 保留 dungeonCfg 等資料，只覆蓋 wx/wy 位置
+    const merged = WORLD_DEF.locations.map((loc, i) => ({
+      ...loc,
+      wx: locs[i]?.wx ?? loc.wx,
+      wy: locs[i]?.wy ?? loc.wy,
+    }));
+    worldTerrainRef.current = terrain;
+    worldLocationsRef.current = merged;
+    // 找到可通行出生點（靠近地圖中心）
+    const spawn = findWorldSpawn(terrain, WORLD_DEF.cols / 2, WORLD_DEF.rows / 2);
+    g.current.wx = spawn.wx; g.current.wy = spawn.wy;
+    g.current.returnWX = spawn.wx; g.current.returnWY = spawn.wy;
+    nearbyLocRef.current = null;
+    setNearbyLocation(null);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 離開地城，返回大地圖 ───────────────────
   function doExitToOverworld() {
@@ -546,7 +572,7 @@ export default function MazeFirstPerson() {
         if (isPassable(terrain, s.wx, ny)) s.wy = ny;
 
         // 靠近地點偵測
-        const near = getNearbyLocation(WORLD_DEF.locations, s.wx, s.wy, ENTRY_PROXIMITY);
+        const near = getNearbyLocation(worldLocationsRef.current, s.wx, s.wy, ENTRY_PROXIMITY);
         if (near?.id !== nearbyLocRef.current?.id) {
           nearbyLocRef.current = near;
           setNearbyLocation(near);
@@ -562,7 +588,7 @@ export default function MazeFirstPerson() {
         }
       }
 
-      drawOverworld(ctx, W, H, terrain, WORLD_DEF.locations, s.wx, s.wy, nearbyLocRef.current);
+      drawOverworld(ctx, W, H, terrain, worldLocationsRef.current, s.wx, s.wy, nearbyLocRef.current);
       s.animId = requestAnimationFrame(() => renderRef.current?.());
       return;
     }
@@ -779,16 +805,13 @@ export default function MazeFirstPerson() {
   }, [cols, rows, fixedRooms, randomCount, minRoom, maxRoom, defaultDoorCount, defaultDoorOpen, globalEvCfg, factoryMode]);
 
   useEffect(() => {
-    // 初始化世界地圖地形（只需一次）
+    // 初始化世界地圖（只需一次）
     if (!worldTerrainRef.current) {
-      worldTerrainRef.current = buildWorldGrid(WORLD_DEF);
-      const spawn = findWorldSpawn(worldTerrainRef.current, WORLD_DEF.startX, WORLD_DEF.startY);
-      g.current.wx = spawn.wx; g.current.wy = spawn.wy;
-      g.current.returnWX = spawn.wx; g.current.returnWY = spawn.wy;
+      regenerateWorld(WORLD_FACTORY_IDS.GRAND_WORLD, 1);
     }
 
     const canvas = canvasRef.current; if (!canvas) return;
-    canvas.width = 520; canvas.height = 340;
+    canvas.width = 640; canvas.height = 440;
     cancelAnimationFrame(g.current.animId);
     g.current.animId = requestAnimationFrame(() => renderRef.current?.());
     const onKey = e => {
@@ -804,6 +827,12 @@ export default function MazeFirstPerson() {
       window.removeEventListener("keyup", onKey);
     };
   }, []);
+
+  // 世界地圖工廠：worldSeed 或 worldFactoryId 變化時重新產生地形
+  useEffect(() => {
+    if (!canvasRef.current) return; // 尚未掛載
+    regenerateWorld(worldFactoryId, worldSeed);
+  }, [worldFactoryId, worldSeed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 迷宮編輯器模式：seed 變化時重新初始化並切換至地城視角
   useEffect(() => {
@@ -919,35 +948,68 @@ export default function MazeFirstPerson() {
   return (
     <div style={{ padding: "1rem 0", fontFamily: "var(--font-sans)" }}>
 
-      {/* ── 模式選擇器 ── */}
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
-        {FACTORIES.map(f => (
-          <button
-            key={f.id}
-            onClick={() => { setFactoryMode(f.id); setSeed(s => s + 1); }}
-            title={f.description}
-            style={{
-              fontSize: 12, padding: "5px 12px",
-              borderRadius: "var(--border-radius-md)",
-              background: factoryMode === f.id ? "var(--color-background-info)" : "var(--color-background-secondary)",
-              color: factoryMode === f.id ? "var(--color-text-info)" : "var(--color-text-secondary)",
-              border: factoryMode === f.id ? "0.5px solid var(--color-border-info)" : "0.5px solid var(--color-border-tertiary)",
-              fontWeight: factoryMode === f.id ? 600 : 400,
-            }}>
-            {f.label}
-          </button>
-        ))}
-        <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", alignSelf: "center", marginLeft: 4 }}>
-          {FACTORIES.find(f => f.id === factoryMode)?.description}
-        </span>
-      </div>
+      {/* ── 迷宮工廠選擇器（地城模式才顯示）── */}
+      {gameMode === 'DUNGEON_INTERIOR' && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+          {FACTORIES.map(f => (
+            <button
+              key={f.id}
+              onClick={() => { setFactoryMode(f.id); setSeed(s => s + 1); }}
+              title={f.description}
+              style={{
+                fontSize: 12, padding: "5px 12px",
+                borderRadius: "var(--border-radius-md)",
+                background: factoryMode === f.id ? "var(--color-background-info)" : "var(--color-background-secondary)",
+                color: factoryMode === f.id ? "var(--color-text-info)" : "var(--color-text-secondary)",
+                border: factoryMode === f.id ? "0.5px solid var(--color-border-info)" : "0.5px solid var(--color-border-tertiary)",
+                fontWeight: factoryMode === f.id ? 600 : 400,
+              }}>
+              {f.label}
+            </button>
+          ))}
+          <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", alignSelf: "center", marginLeft: 4 }}>
+            {FACTORIES.find(f => f.id === factoryMode)?.description}
+          </span>
+        </div>
+      )}
 
-      {/* ── 大地圖模式按鈕 ── */}
+      {/* ── 大地圖工廠選擇器 ── */}
+      {gameMode === 'OVERWORLD' && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+          {WORLD_FACTORIES.map(f => (
+            <button
+              key={f.id}
+              onClick={() => setWorldFactoryId(f.id)}
+              title={f.description}
+              style={{
+                fontSize: 12, padding: "5px 12px",
+                borderRadius: "var(--border-radius-md)",
+                background: worldFactoryId === f.id ? "var(--color-background-success)" : "var(--color-background-secondary)",
+                color: worldFactoryId === f.id ? "var(--color-text-success)" : "var(--color-text-secondary)",
+                border: worldFactoryId === f.id ? "0.5px solid var(--color-border-success)" : "0.5px solid var(--color-border-tertiary)",
+                fontWeight: worldFactoryId === f.id ? 600 : 400,
+              }}>
+              {f.label}
+            </button>
+          ))}
+          <button
+            onClick={() => setWorldSeed(s => s + 1)}
+            style={{ fontSize: 12, padding: "5px 12px", marginLeft: 4 }}>
+            🎲 重新產生地圖
+          </button>
+          <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", alignSelf: "center" }}>
+            {WORLD_FACTORIES.find(f => f.id === worldFactoryId)?.description}
+            {' '}#{worldSeed}
+          </span>
+        </div>
+      )}
+
+      {/* ── 地城模式按鈕 ── */}
       {gameMode === 'DUNGEON_INTERIOR' && (
         <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
           <button onClick={doExitToOverworld} style={{ fontSize: 12, padding: "4px 12px" }}>← 返回大地圖</button>
           <span style={{ fontSize: 12, color: "var(--color-text-tertiary)" }}>
-            📍 {WORLD_DEF.locations.find(l => l.id === g.current.activeLocationId)?.label || '地城'}
+            📍 {worldLocationsRef.current.find(l => l.id === g.current.activeLocationId)?.label || '地城'}
           </span>
           {/* 玩家狀態列 */}
           <div style={{ marginLeft: "auto", display: "flex", gap: 12, fontSize: 12 }}>
@@ -1077,6 +1139,9 @@ export default function MazeFirstPerson() {
         </div>
         <button onClick={() => setSeed(s => s + 1)} style={{ marginLeft: "auto", alignSelf: "center" }}>重新開始</button>
       </div>
+
+      {/* ── 地城編輯器面板（大地圖模式下隱藏）── */}
+      {gameMode === 'DUNGEON_INTERIOR' && (<>
 
       {/* ── 地圖與房間大小設定 ── */}
       <div style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-lg)", padding: "10px 14px", marginBottom: 14 }}>
@@ -1273,7 +1338,9 @@ export default function MazeFirstPerson() {
       )}
 
       {/* ── 迷宮資料顯示（舊工具模式）── */}
-      {gameMode !== 'DUNGEON_INTERIOR' && mazeData && <MazeDataPanel data={mazeData} walls={g.current.walls} />}
+      {mazeData && <MazeDataPanel data={mazeData} walls={g.current.walls} />}
+
+      </>)}
 
     </div>
   );
