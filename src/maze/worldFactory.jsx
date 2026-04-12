@@ -149,7 +149,7 @@ function placeVolcano(terrain, cols, rows, cx, cy, r) {
   }
 }
 
-// 尋找海岸線附近的可通行格（供港口放置）
+// 尋找直接緊鄰水域（1格內）的可通行格（供港口放置）
 function findCoastalSpot(terrain, cols, rows, rng, minDist, occupied) {
   const waterSet = new Set([TERRAIN.WATER, TERRAIN.DEEP_WATER]);
   const blocked  = new Set([TERRAIN.MOUNTAIN, TERRAIN.WATER, TERRAIN.DEEP_WATER, TERRAIN.LAVA]);
@@ -157,36 +157,38 @@ function findCoastalSpot(terrain, cols, rows, rng, minDist, occupied) {
   for (let r = 2; r < rows - 2; r++) {
     for (let c = 2; c < cols - 2; c++) {
       if (blocked.has(terrain[r][c])) continue;
-      let near = false;
-      outer: for (let dr = -3; dr <= 3; dr++) {
-        for (let dc = -3; dc <= 3; dc++) {
-          const nr = r + dr, nc = c + dc;
-          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && waterSet.has(terrain[nr][nc])) {
-            near = true; break outer;
-          }
+      // 只接受與水域直接相鄰（4方向）的格子
+      let adjacent = false;
+      for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+        const nr = r + dr, nc = c + dc;
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && waterSet.has(terrain[nr][nc])) {
+          adjacent = true; break;
         }
       }
-      if (near) coastal.push({ wx: c, wy: r });
+      if (adjacent) coastal.push({ wx: c, wy: r });
     }
   }
   for (let i = coastal.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [coastal[i], coastal[j]] = [coastal[j], coastal[i]];
   }
-  for (const p of coastal) {
-    if (occupied.every(q => Math.hypot(p.wx - q.wx, p.wy - q.wy) >= minDist)) return p;
+  // 逐步放寬間距，確保一定能放在海岸上
+  for (const tryDist of [minDist, Math.ceil(minDist * 0.6), 4, 2]) {
+    for (const p of coastal) {
+      if (occupied.every(q => Math.hypot(p.wx - q.wx, p.wy - q.wy) >= tryDist)) return p;
+    }
   }
-  // 無海岸時退化為任意可通行地
-  return placeAnywhere(terrain, cols, rows, rng,
+  // 只有在地圖完全無海岸時才退化（例如純內陸沼澤地圖）
+  return coastal[0] ?? placeAnywhere(terrain, cols, rows, rng,
     [TERRAIN.PLAINS, TERRAIN.FOREST, TERRAIN.SNOW, TERRAIN.DESERT, TERRAIN.SAVANNA, TERRAIN.SWAMP, TERRAIN.TUNDRA],
-    minDist, occupied);
+    2, occupied);
 }
 
 // 在地圖上放置 3 個港口位置（追加到現有 locations 之後）
 function addPorts(terrain, cols, rows, rng, existingLocs) {
   const ports = [];
   for (let i = 0; i < 3; i++) {
-    const p = findCoastalSpot(terrain, cols, rows, rng, 12, [...existingLocs, ...ports]);
+    const p = findCoastalSpot(terrain, cols, rows, rng, 8, [...existingLocs, ...ports]);
     ports.push(p);
   }
   return ports;
