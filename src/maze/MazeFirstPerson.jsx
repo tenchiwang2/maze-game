@@ -23,6 +23,7 @@ import DialoguePanel  from './DialoguePanel.jsx';
 import CombatPanel    from './CombatPanel.jsx';
 import ShopPanel      from './ShopPanel.jsx';
 import InventoryPanel from './InventoryPanel.jsx';
+import TownPanel      from './TownPanel.jsx';
 
 // ─────────────────────────────────────────────
 //  單張地圖建立輔助（供多地圖模式使用）
@@ -414,7 +415,8 @@ export default function MazeFirstPerson() {
   const [currentMapIdx, setCurrentMapIdx] = useState(0);
   const [transitionPrompt, setTransitionPrompt] = useState(null); // null | 'fwd' | 'bwd'
   // ── RPG 狀態 ──
-  const [gameMode, setGameMode] = useState('OVERWORLD'); // 'OVERWORLD' | 'DUNGEON_INTERIOR'
+  const [gameMode, setGameMode] = useState('OVERWORLD'); // 'OVERWORLD' | 'DUNGEON_INTERIOR' | 'TOWN_MENU'
+  const [activeTownLoc, setActiveTownLoc] = useState(null);
   const [nearbyLocation, setNearbyLocation]   = useState(null);
   const [activeDialogue, setActiveDialogue]   = useState(null); // dialogueId
   const [activeShop, setActiveShop]           = useState(null); // shopId
@@ -553,6 +555,7 @@ export default function MazeFirstPerson() {
     s.uiPaused = false;
     s.transitionPrompt = null; s.wasOnPortal = false;
     setGameMode('OVERWORLD');
+    setActiveTownLoc(null);
     setWon(false);
     setTransitionPrompt(null);
     setActiveDialogue(null);
@@ -568,6 +571,23 @@ export default function MazeFirstPerson() {
 
     s.returnWX = s.wx; s.returnWY = s.wy;
     s.activeLocationId = loc.id;
+
+    // 城鎮/首都 → 選單模式，不產生迷宮
+    if (loc.type === LOC_TYPE.TOWN || loc.type === LOC_TYPE.CAPITAL) {
+      const flatEvents = [
+        ...(cfg.fixedRooms ?? []).flatMap(rm => rm.events ?? []),
+        ...(cfg.globalEvents ?? []),
+      ].filter(ev => ev.type !== 'town_gate');
+      setEvents(flatEvents);
+      s.gameMode = 'TOWN_MENU';
+      setGameMode('TOWN_MENU');
+      setActiveTownLoc(loc);
+      setNearbyLocation(null);
+      nearbyLocRef.current = null;
+      const p = playerRef.current;
+      QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'reach', { locationId: loc.id }));
+      return;
+    }
     s.lightCfg = {
       ambient:     cfg.ambient     ?? AMBIENT,
       torchRadius: cfg.torchRadius ?? TORCH_RADIUS,
@@ -1124,8 +1144,48 @@ export default function MazeFirstPerson() {
         </div>
       )}
 
+      {/* ── 城鎮選單模式按鈕 ── */}
+      {gameMode === 'TOWN_MENU' && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+          <button onClick={doExitToOverworld} style={{ fontSize: 12, padding: "4px 12px" }}>← 返回大地圖</button>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 12, fontSize: 12 }}>
+            <span style={{ color: "#ff8888" }}>❤ {playerStats.hp}/{playerStats.maxHp}</span>
+            <span style={{ color: "#88aaff" }}>💧 {playerStats.mp}/{playerStats.maxMp}</span>
+            <span style={{ color: "#ffd060" }}>💰 {playerStats.gold}</span>
+            <span style={{ color: "#aaffaa" }}>Lv.{playerStats.lv}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── 城鎮選單 ── */}
+      {gameMode === 'TOWN_MENU' && activeTownLoc && (
+        <div style={{ marginBottom: 10, position: "relative", display: "inline-block" }}>
+          <TownPanel
+            loc={activeTownLoc}
+            events={events}
+            onEvent={triggerEvent}
+            onExit={doExitToOverworld}
+          />
+          {/* 覆蓋面板（對話/商店/戰鬥）掛在同一容器 */}
+          {activeDialogue && (
+            <DialoguePanel lines={DIALOGUES[activeDialogue] || []} onClose={closeDialogue} />
+          )}
+          {activeShop && (
+            <ShopPanel
+              shopDef={SHOPS[activeShop]}
+              player={playerRef.current}
+              onClose={closeShop}
+              onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
+            />
+          )}
+          {activeCombat && (
+            <CombatPanel enemyId={activeCombat} player={playerRef.current} onCombatEnd={closeCombat} />
+          )}
+        </div>
+      )}
+
       {/* ── 畫布 ── */}
-      <div style={{ overflowX: "auto", marginBottom: 10, position: "relative", display: "inline-block" }}>
+      <div style={{ overflowX: "auto", marginBottom: 10, position: "relative", display: gameMode === 'TOWN_MENU' ? "none" : "inline-block" }}>
         <canvas ref={canvasRef} style={{ display: "block", borderRadius: "var(--border-radius-md)", background: "#0d0d1a" }} />
 
         {/* ── 港口旅行面板 ── */}
@@ -1138,14 +1198,14 @@ export default function MazeFirstPerson() {
           />
         )}
 
-        {/* ── RPG 覆蓋面板 ── */}
-        {activeDialogue && (
+        {/* ── RPG 覆蓋面板（地城模式）── */}
+        {gameMode !== 'TOWN_MENU' && activeDialogue && (
           <DialoguePanel
             lines={DIALOGUES[activeDialogue] || []}
             onClose={closeDialogue}
           />
         )}
-        {activeShop && (
+        {gameMode !== 'TOWN_MENU' && activeShop && (
           <ShopPanel
             shopDef={SHOPS[activeShop]}
             player={playerRef.current}
@@ -1153,7 +1213,7 @@ export default function MazeFirstPerson() {
             onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
           />
         )}
-        {activeCombat && (
+        {gameMode !== 'TOWN_MENU' && activeCombat && (
           <CombatPanel
             enemyId={activeCombat}
             player={playerRef.current}
