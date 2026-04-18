@@ -281,9 +281,14 @@ export const WORLD_FACTORIES = [
       // 6: 火山洞窟（靠近熔岩）
       const L6 = push(l([TERRAIN.SAVANNA, TERRAIN.DESERT, TERRAIN.PLAINS], 7));
       // 7: 古代神殿（任意可通行）
-      const L7 = push(l(ANY, 8));
+      const L7  = push(l(ANY, 8));
+      // 8-11: 補足至 12 個（對應 WORLD_DEF 的 town_icelake / peak / dungeon / temple）
+      const L8  = push(l(COLD, 7));
+      const L9  = push(l(COLD, 6));
+      const L10 = push(l([TERRAIN.SAVANNA, TERRAIN.DESERT, TERRAIN.PLAINS], 6));
+      const L11 = push(l(ANY, 6));
 
-      const locations = [L0, L1, L2, L3, L4, L5, L6, L7];
+      const locations = [L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11];
 
       // 鋪設王國內道路（前三個城鎮互連）
       placeRoads(terrain, cols, rows, [L0, L1, L2]);
@@ -331,7 +336,7 @@ export const WORLD_FACTORIES = [
 
       const ALL = [TERRAIN.PLAINS, TERRAIN.FOREST, TERRAIN.SAVANNA];
       const occ = [];
-      const locations = Array.from({ length: 8 }, () => {
+      const locations = Array.from({ length: 12 }, () => {
         const p = placeAnywhere(terrain, cols, rows, rng, ALL, 8, occ);
         occ.push(p);
         return p;
@@ -374,7 +379,7 @@ export const WORLD_FACTORIES = [
 
       const COLD = [TERRAIN.SNOW, TERRAIN.TUNDRA, TERRAIN.FOREST];
       const occ = [];
-      const locations = Array.from({ length: 8 }, () => {
+      const locations = Array.from({ length: 12 }, () => {
         const p = placeAnywhere(terrain, cols, rows, rng, COLD, 7, occ);
         occ.push(p);
         return p;
@@ -418,7 +423,7 @@ export const WORLD_FACTORIES = [
 
       const HOT = [TERRAIN.DESERT, TERRAIN.SAVANNA];
       const occ = [];
-      const locations = Array.from({ length: 8 }, () => {
+      const locations = Array.from({ length: 12 }, () => {
         const p = placeAnywhere(terrain, cols, rows, rng, HOT, 7, occ);
         occ.push(p);
         return p;
@@ -470,7 +475,7 @@ export const WORLD_FACTORIES = [
 
       const SAFE = [TERRAIN.PLAINS, TERRAIN.FOREST, TERRAIN.SAVANNA];
       const occ = [];
-      const locations = Array.from({ length: 8 }, () => {
+      const locations = Array.from({ length: 12 }, () => {
         const p = placeAnywhere(terrain, cols, rows, rng, SAFE, 6, occ);
         occ.push(p);
         return p;
@@ -515,7 +520,7 @@ export const WORLD_FACTORIES = [
 
       const SAFE = [TERRAIN.PLAINS, TERRAIN.FOREST, TERRAIN.SWAMP];
       const occ = [];
-      const locations = Array.from({ length: 8 }, () => {
+      const locations = Array.from({ length: 12 }, () => {
         const p = placeAnywhere(terrain, cols, rows, rng, SAFE, 7, occ);
         occ.push(p);
         return p;
@@ -566,7 +571,7 @@ export const WORLD_FACTORIES = [
 
       const SAFE = [TERRAIN.PLAINS, TERRAIN.FOREST, TERRAIN.SAVANNA, TERRAIN.SNOW];
       const occ = [];
-      const locations = Array.from({ length: 8 }, () => {
+      const locations = Array.from({ length: 12 }, () => {
         const p = placeAnywhere(terrain, cols, rows, rng, SAFE, 5, occ);
         occ.push(p);
         return p;
@@ -624,7 +629,7 @@ export const WORLD_FACTORIES = [
 
       const SAFE = [TERRAIN.PLAINS, TERRAIN.FOREST, TERRAIN.SAVANNA, TERRAIN.SNOW];
       const occ = [];
-      const locations = Array.from({ length: 8 }, () => {
+      const locations = Array.from({ length: 12 }, () => {
         const p = placeAnywhere(terrain, cols, rows, rng, SAFE, 7, occ);
         occ.push(p);
         return p;

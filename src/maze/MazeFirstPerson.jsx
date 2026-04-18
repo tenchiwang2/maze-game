@@ -15,7 +15,8 @@ import { isPassable, findWorldSpawn, getNearbyLocation, LOC_TYPE } from './world
 import { WORLD_DEF, DIALOGUES, SHOPS, QUEST_DEFS } from './worldData.jsx';
 import { WORLD_FACTORIES, WORLD_FACTORY_IDS } from './worldFactory.jsx';
 import { drawOverworld } from './OverworldRenderer.jsx';
-import { createPlayer, gainExp, addItem, recordKill, checkQuestStep } from './playerState.jsx';
+import { createPlayer, addItem, checkQuestStep } from './playerState.jsx';
+import { applyCombatResult } from './combatService.js';
 import { rollLoot } from './combatEngine.jsx';
 import { ITEMS } from './itemData.jsx';
 import { ENEMIES } from './enemyData.jsx';
@@ -24,6 +25,12 @@ import CombatPanel    from './CombatPanel.jsx';
 import ShopPanel      from './ShopPanel.jsx';
 import InventoryPanel from './InventoryPanel.jsx';
 import TownPanel      from './TownPanel.jsx';
+import { on, emit } from './eventBus.js';
+import {
+  TIME_START, TIME_WORLD_PER_MIN, TIME_DUNGEON_PER_MIN,
+  TIME_DIALOGUE, TIME_SHOP, TIME_CHEST, TIME_COMBAT,
+  formatTime, advanceTime, minsToNextDawn, getTimePeriod,
+} from './timeSystem.js';
 
 // ─────────────────────────────────────────────
 //  單張地圖建立輔助（供多地圖模式使用）
@@ -426,6 +433,7 @@ export default function MazeFirstPerson() {
   const [playerStats, setPlayerStats]         = useState(() => createPlayer()); // for re-render trigger
   const [questLog, setQuestLog]               = useState([]);
   const [levelUpMsg, setLevelUpMsg]           = useState('');
+  const [gameTime, setGameTime]               = useState(TIME_START); // 遊戲時間（分鐘）
 
   // ── 世界地圖工廠 ──
   const [worldFactoryId, setWorldFactoryId] = useState(WORLD_FACTORY_IDS.GRAND_WORLD);
@@ -456,6 +464,8 @@ export default function MazeFirstPerson() {
     activeLocationId: null,
     lightCfg: { ambient: AMBIENT, torchRadius: TORCH_RADIUS },
     uiPaused: false,
+    gameTime: TIME_START,  // 分鐘，game loop 用
+    timeAccum: 0,          // 移動距離累積器
   });
   const renderRef = useRef(null);
   const eventsRef = useRef(events);
@@ -486,7 +496,7 @@ export default function MazeFirstPerson() {
     }
     if (ev.type === 'combat' && ev.enemyId) {
       g.current.uiPaused = true;
-      setActiveCombat(ev.enemyId);
+      emit('combat:start', { enemyId: ev.enemyId });
     }
     if (ev.type === 'chest') {
       const p = playerRef.current;
@@ -496,6 +506,8 @@ export default function MazeFirstPerson() {
       setPlayerStats({ ...p });
       // 任務：collect 進度
       QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'collect', { itemId: ev.itemId }));
+      g.current.gameTime = advanceTime(g.current.gameTime, TIME_CHEST);
+      setGameTime(g.current.gameTime);
     }
     if (ev.type === 'town_gate') {
       doExitToOverworld();
@@ -510,14 +522,29 @@ export default function MazeFirstPerson() {
   const regenerateWorld = useCallback((factoryId, seed) => {
     const factory = WORLD_FACTORIES.find(f => f.id === factoryId) ?? WORLD_FACTORIES[0];
     const { terrain, locations: locs } = factory.generate(seed, WORLD_DEF.cols, WORLD_DEF.rows);
-    // 保留 dungeonCfg 等資料，只覆蓋 wx/wy 位置
-    const merged = WORLD_DEF.locations.map((loc, i) => ({
-      ...loc,
-      wx: locs[i]?.wx ?? loc.wx,
-      wy: locs[i]?.wy ?? loc.wy,
-    }));
+    // 工廠輸出：末尾 3 個是港口（海岸格），其餘是陸地城鎮/地城
+    const portFactory    = locs.slice(-3);
+    const nonPortFactory = locs.slice(0, locs.length - 3);
+    // 分開合併：PORT 用海岸座標，其他用陸地座標
+    let nonPortIdx = 0, portIdx = 0;
+    const merged = WORLD_DEF.locations.map((loc) => {
+      if (loc.type === LOC_TYPE.PORT) {
+        const pos = portFactory[portIdx++];
+        return pos ? { ...loc, wx: pos.wx, wy: pos.wy } : loc;
+      } else {
+        const pos = nonPortFactory[nonPortIdx++];
+        return pos ? { ...loc, wx: pos.wx, wy: pos.wy } : loc;
+      }
+    });
+    // 補救：factory 位置不足時 hardcode 座標可能落在水上，移到最近陸地
+    const sanitized = merged.map((loc) => {
+      if (loc.type === LOC_TYPE.PORT) return loc;
+      if (isPassable(terrain, loc.wx, loc.wy)) return loc;
+      const safe = findWorldSpawn(terrain, Math.floor(loc.wx), Math.floor(loc.wy));
+      return { ...loc, wx: safe.wx, wy: safe.wy };
+    });
     worldTerrainRef.current = terrain;
-    worldLocationsRef.current = merged;
+    worldLocationsRef.current = sanitized;
     // 找到可通行出生點（靠近地圖中心）
     const spawn = findWorldSpawn(terrain, WORLD_DEF.cols / 2, WORLD_DEF.rows / 2);
     g.current.wx = spawn.wx; g.current.wy = spawn.wy;
@@ -703,9 +730,22 @@ export default function MazeFirstPerson() {
         const spd = WORLD_MOVE_SPEED;
         const dx = (s.keys['d'] || s.keys['ArrowRight'] ? spd : 0) - (s.keys['a'] || s.keys['ArrowLeft'] ? spd : 0);
         const dy = (s.keys['s'] || s.keys['ArrowDown']  ? spd : 0) - (s.keys['w'] || s.keys['ArrowUp']   ? spd : 0);
+        const prevWx = s.wx, prevWy = s.wy;
         const nx = s.wx + dx, ny = s.wy + dy;
         if (isPassable(terrain, nx, s.wy)) s.wx = nx;
         if (isPassable(terrain, s.wx, ny)) s.wy = ny;
+
+        // 移動距離累積 → 時間流逝
+        const moved = Math.abs(s.wx - prevWx) + Math.abs(s.wy - prevWy);
+        if (moved > 0) {
+          s.timeAccum += moved;
+          const minsGained = Math.floor(s.timeAccum / TIME_WORLD_PER_MIN);
+          if (minsGained > 0) {
+            s.timeAccum -= minsGained * TIME_WORLD_PER_MIN;
+            s.gameTime = advanceTime(s.gameTime, minsGained);
+            setGameTime(s.gameTime);
+          }
+        }
 
         // 靠近地點偵測
         const near = getNearbyLocation(worldLocationsRef.current, s.wx, s.wy, ENTRY_PROXIMITY);
@@ -735,6 +775,7 @@ export default function MazeFirstPerson() {
 
     if (!s.won && !s.uiPaused) {
       const cos = Math.cos(s.angle), sin = Math.sin(s.angle);
+      const prevPx = s.px, prevPy = s.py;
       const mv = (nx, ny) => {
         if (s.grid[Math.floor(s.py)][Math.floor(nx)] === 0) s.px = nx;
         if (s.grid[Math.floor(ny)][Math.floor(s.px)] === 0) s.py = ny;
@@ -743,6 +784,18 @@ export default function MazeFirstPerson() {
       if (s.keys["ArrowDown"] || s.keys["s"]) mv(s.px - cos * MOVE_SPEED, s.py - sin * MOVE_SPEED);
       if (s.keys["ArrowLeft"] || s.keys["a"]) s.angle -= TURN_SPEED;
       if (s.keys["ArrowRight"] || s.keys["d"]) s.angle += TURN_SPEED;
+
+      // 移動距離累積 → 時間流逝（轉向不算）
+      const dungeonMoved = Math.abs(s.px - prevPx) + Math.abs(s.py - prevPy);
+      if (dungeonMoved > 0) {
+        s.timeAccum += dungeonMoved;
+        const minsGained = Math.floor(s.timeAccum / TIME_DUNGEON_PER_MIN);
+        if (minsGained > 0) {
+          s.timeAccum -= minsGained * TIME_DUNGEON_PER_MIN;
+          s.gameTime = advanceTime(s.gameTime, minsGained);
+          setGameTime(s.gameTime);
+        }
+      }
 
       const onExitPortal  = Math.floor(s.px) === s.exitGX  && Math.floor(s.py) === s.exitGY;
       const onEntryPortal = s.multiMap && s.currentMapIdx > 0
@@ -1047,42 +1100,67 @@ export default function MazeFirstPerson() {
   const typeColor = { message: "var(--color-text-primary)", teleport: "var(--color-text-info)", door: "var(--color-text-warning)", win: "var(--color-text-success)" };
   const safeMin = Math.min(minRoom, maxRoom), safeMax = Math.max(minRoom, maxRoom);
 
+  // ── 時間工具 ──
+  function advanceGameTime(minutes) {
+    g.current.gameTime = advanceTime(g.current.gameTime, minutes);
+    setGameTime(g.current.gameTime);
+  }
+
+  function doCampRest() {
+    const mins = minsToNextDawn(g.current.gameTime);
+    g.current.gameTime = advanceTime(g.current.gameTime, mins);
+    setGameTime(g.current.gameTime);
+    // 紮營同時完全回復
+    const p = playerRef.current;
+    p.hp = p.maxHp;
+    p.mp = p.maxMp;
+    setPlayerStats({ ...p });
+  }
+
   // ── UI 面板關閉回呼 ──
-  function closeDialogue()  { setActiveDialogue(null); g.current.uiPaused = false; g.current.interactCooldown = 60; }
-  function closeShop()      { setActiveShop(null);     g.current.uiPaused = false; g.current.interactCooldown = 60; }
+  function closeDialogue()  { setActiveDialogue(null); g.current.uiPaused = false; g.current.interactCooldown = 60; advanceGameTime(TIME_DIALOGUE); }
+  function closeShop()      { setActiveShop(null);     g.current.uiPaused = false; g.current.interactCooldown = 60; advanceGameTime(TIME_SHOP); }
   function closeInventory() { setShowInventory(false); g.current.uiPaused = false; g.current.interactCooldown = 30; }
 
-  function closeCombat(result) {
-    setActiveCombat(null);
-    g.current.uiPaused = false;
-    g.current.interactCooldown = 80;
-    const p = playerRef.current;
+  // ── 戰鬥事件訂閱 ──
+  useEffect(() => {
+    const unsubStart = on('combat:start', ({ enemyId }) => {
+      setActiveCombat(enemyId);
+    });
 
-    if (result?.won) {
-      // 發放經驗值與掉落
-      result.loot?.forEach(l => addItem(p, l.itemId, l.qty));
-      if (result.exp) {
-        const { leveled, messages } = gainExp(p, result.exp);
-        if (leveled) { setLevelUpMsg(messages[0] || '升等！'); setTimeout(() => setLevelUpMsg(''), 3000); }
+    const unsubEnd = on('combat:end', (result) => {
+      setActiveCombat(null);
+      g.current.uiPaused = false;
+      g.current.interactCooldown = 80;
+      const p = playerRef.current;
+
+      const { leveled, levelMsg } = applyCombatResult(result, p, QUEST_DEFS);
+      if (leveled) { setLevelUpMsg(levelMsg); setTimeout(() => setLevelUpMsg(''), 3000); }
+
+      if (!result?.fled) {
+        g.current.gameTime = advanceTime(g.current.gameTime, TIME_COMBAT);
+        setGameTime(g.current.gameTime);
       }
-      // 任務：kill 進度
-      const enemyId = activeCombat; // captured in closure
-      recordKill(p, enemyId);
-      QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'kill', { enemyId }));
-    }
-    if (!result?.won && !result?.fled) {
-      // 被打倒：傳回起點
-      const s = g.current;
-      p.hp = Math.max(1, Math.floor(p.maxHp * 0.3)); // 殘血復活
-      const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
-      s.px = sp.px; s.py = sp.py;
-    }
-    setPlayerStats({ ...p });
-    setQuestLog(p.quests.map(q => ({ ...q })));
-  }
+
+      if (!result?.won && !result?.fled) {
+        const s = g.current;
+        p.hp = Math.max(1, Math.floor(p.maxHp * 0.3));
+        const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
+        s.px = sp.px; s.py = sp.py;
+      }
+      setPlayerStats({ ...p });
+      setQuestLog(p.quests.map(q => ({ ...q })));
+    });
+
+    return () => { unsubStart(); unsubEnd(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div style={{ padding: "1rem 0", fontFamily: "var(--font-sans)" }}>
+      <div style={{ position: 'fixed', bottom: 8, right: 10, fontSize: 10, color: 'rgba(255,255,255,0.3)', pointerEvents: 'none', zIndex: 9999 }}>
+        v0.3.0-timesystem
+      </div>
 
       {/* ── 迷宮工廠選擇器（地城模式才顯示）── */}
       {gameMode === 'DUNGEON_INTERIOR' && (
@@ -1192,7 +1270,7 @@ export default function MazeFirstPerson() {
             />
           )}
           {activeCombat && (
-            <CombatPanel enemyId={activeCombat} player={playerRef.current} onCombatEnd={closeCombat} />
+            <CombatPanel enemyId={activeCombat} player={playerRef.current} />
           )}
           {activePort && (
             <PortPanel
@@ -1208,6 +1286,47 @@ export default function MazeFirstPerson() {
       {/* ── 畫布 ── */}
       <div style={{ overflowX: "auto", marginBottom: 10, position: "relative", display: gameMode === 'TOWN_MENU' ? "none" : "inline-block" }}>
         <canvas ref={canvasRef} style={{ display: "block", borderRadius: "var(--border-radius-md)", background: "#0d0d1a" }} />
+
+        {/* 人物動作面板（含時間）— 大地圖顯示完整版，其他模式只顯示時間 */}
+        {(() => {
+          const period = getTimePeriod(gameTime);
+          return (
+            <div style={{
+              position: 'absolute', bottom: 16, left: 16,
+              background: 'rgba(8,8,18,0.92)',
+              border: `1px solid ${period.color}44`,
+              borderRadius: 8, padding: '10px 14px',
+              fontFamily: 'monospace', zIndex: 8, minWidth: 140,
+            }}>
+              {/* 時間列 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: gameMode === 'OVERWORLD' ? 10 : 0 }}>
+                <span style={{ fontSize: 15, lineHeight: 1 }}>{period.icon}</span>
+                <span style={{ fontSize: 14, color: period.color, letterSpacing: '0.06em', fontWeight: 600 }}>
+                  {formatTime(gameTime)}
+                </span>
+                <span style={{ fontSize: 10, color: `${period.color}aa`, marginLeft: 2 }}>
+                  {period.label}
+                </span>
+              </div>
+
+              {/* 動作區 — 僅大地圖 */}
+              {gameMode === 'OVERWORLD' && (
+                <>
+                  <div style={{ height: 1, background: `${period.color}22`, marginBottom: 8 }} />
+                  <button onClick={doCampRest} style={{
+                    width: '100%', padding: '7px 8px',
+                    background: 'rgba(60,60,100,0.35)',
+                    border: '1px solid rgba(100,100,180,0.5)',
+                    borderRadius: 6, fontSize: 12,
+                    color: '#aaaaff', cursor: 'pointer',
+                  }}>
+                    ⛺ 扎營休息
+                  </button>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ── 港口旅行面板 ── */}
         {gameMode !== 'TOWN_MENU' && activePort && (
@@ -1238,7 +1357,6 @@ export default function MazeFirstPerson() {
           <CombatPanel
             enemyId={activeCombat}
             player={playerRef.current}
-            onCombatEnd={closeCombat}
           />
         )}
         {showInventory && (

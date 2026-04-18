@@ -7,6 +7,7 @@ import { resolveTurn, rollLoot } from './combatEngine.jsx';
 import { ENEMIES } from './enemyData.jsx';
 import { ITEMS } from './itemData.jsx';
 import { useItem } from './playerState.jsx';
+import { emit } from './eventBus.js';
 
 const PANEL = {
   position: 'absolute', top: '50%', left: '50%',
@@ -28,14 +29,14 @@ function HpBar({ current, max, color }) {
   );
 }
 
-export default function CombatPanel({ enemyId, player, onCombatEnd }) {
+export default function CombatPanel({ enemyId, player }) {
   const enemyDef = ENEMIES[enemyId];
   const [enemyHp, setEnemyHp]   = useState(enemyDef?.hp || 0);
   const [playerHp, setPlayerHp] = useState(player.hp);
   const [log, setLog]           = useState([`⚔ 遭遇 ${enemyDef?.name || '未知敵人'}！`]);
   const [phase, setPhase]       = useState('player'); // 'player' | 'victory' | 'defeat'
 
-  if (!enemyDef) { onCombatEnd({ fled: true }); return null; }
+  if (!enemyDef) { emit('combat:end', { enemyId, fled: true }); return null; }
 
   const consumables = player.items.filter(i => ITEMS[i.itemId]?.type === 'consumable');
 
@@ -57,7 +58,7 @@ export default function CombatPanel({ enemyId, player, onCombatEnd }) {
 
       if (finalPlayerHp <= 0) {
         setPhase('defeat');
-        onCombatEnd({ won: false, fled: false });
+        emit('combat:end', { enemyId, won: false, fled: false });
       }
       return;
     }
@@ -75,7 +76,7 @@ export default function CombatPanel({ enemyId, player, onCombatEnd }) {
 
     if (result.fled) {
       setPhase('victory'); // 重用 victory phase
-      setTimeout(() => onCombatEnd({ fled: true }), 800);
+      setTimeout(() => emit('combat:end', { enemyId, fled: true }), 800);
       return;
     }
     if (newEnemyHp <= 0) {
@@ -83,12 +84,12 @@ export default function CombatPanel({ enemyId, player, onCombatEnd }) {
       const lootMsgs = loot.map(l => `獲得 ${ITEMS[l.itemId]?.name || l.itemId} ×${l.qty}`);
       setLog(prev => [...prev, ...lootMsgs, `獲得 ${enemyDef.exp} 點 EXP！`].slice(-8));
       setPhase('victory');
-      setTimeout(() => onCombatEnd({ won: true, fled: false, loot, exp: enemyDef.exp }), 1200);
+      setTimeout(() => emit('combat:end', { enemyId, won: true, fled: false, loot, exp: enemyDef.exp }), 1200);
       return;
     }
     if (newPlayerHp <= 0) {
       setPhase('defeat');
-      onCombatEnd({ won: false, fled: false });
+      emit('combat:end', { enemyId, won: false, fled: false });
       return;
     }
   }
@@ -161,7 +162,7 @@ export default function CombatPanel({ enemyId, player, onCombatEnd }) {
       {phase === 'defeat' && (
         <div style={{ textAlign: 'center', fontSize: 13, padding: '8px 0' }}>
           <div style={{ color: '#ff6666', fontWeight: 600, marginBottom: 8 }}>你被打倒了...</div>
-          <button onClick={() => onCombatEnd({ won: false, fled: false })} style={{
+          <button onClick={() => emit('combat:end', { enemyId, won: false, fled: false })} style={{
             fontSize: 12, padding: '6px 20px', borderRadius: 6,
             background: 'rgba(80,80,80,0.4)', border: '1px solid #666',
             color: '#aaa', cursor: 'pointer',
