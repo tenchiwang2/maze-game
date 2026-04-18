@@ -500,6 +500,10 @@ export default function MazeFirstPerson() {
     if (ev.type === 'town_gate') {
       doExitToOverworld();
     }
+    if (ev.type === 'port_travel') {
+      g.current.uiPaused = true;
+      setActivePort(worldLocationsRef.current.find(l => l.id === g.current.activeLocationId) ?? null);
+    }
   }
 
   // ── 世界地圖重新產生 ──────────────────────
@@ -533,10 +537,15 @@ export default function MazeFirstPerson() {
     const spawn = findWorldSpawn(worldTerrainRef.current, destLoc.wx, destLoc.wy);
     s.wx = spawn.wx;
     s.wy = spawn.wy;
+    s.returnWX = spawn.wx; s.returnWY = spawn.wy;
+    s.gameMode = 'OVERWORLD';
+    s.activeLocationId = null;
     s.uiPaused = false;
     nearbyLocRef.current = null;
     setNearbyLocation(null);
     setActivePort(null);
+    setActiveTownLoc(null);
+    setGameMode('OVERWORLD');
     setLog(prev => [{ id: Date.now(), type: 'message', text: `⚓ 抵達 ${destLoc.label}` }, ...prev].slice(0, 30));
   }
 
@@ -572,12 +581,17 @@ export default function MazeFirstPerson() {
     s.returnWX = s.wx; s.returnWY = s.wy;
     s.activeLocationId = loc.id;
 
-    // 城鎮/首都 → 選單模式，不產生迷宮
-    if (loc.type === LOC_TYPE.TOWN || loc.type === LOC_TYPE.CAPITAL) {
-      const flatEvents = [
-        ...(cfg.fixedRooms ?? []).flatMap(rm => rm.events ?? []),
-        ...(cfg.globalEvents ?? []),
-      ].filter(ev => ev.type !== 'town_gate');
+    // 城鎮/首都/小城鎮/港口 → 選單模式，不產生迷宮
+    if (loc.type === LOC_TYPE.TOWN || loc.type === LOC_TYPE.TOWN_SMALL || loc.type === LOC_TYPE.CAPITAL || loc.type === LOC_TYPE.PORT) {
+      let flatEvents;
+      if (loc.type === LOC_TYPE.PORT) {
+        flatEvents = [{ id: 'port_travel', type: 'port_travel', text: '出航', icon: '⚓', repeatable: true }];
+      } else {
+        flatEvents = [
+          ...(cfg.fixedRooms ?? []).flatMap(rm => rm.events ?? []),
+          ...(cfg.globalEvents ?? []),
+        ].filter(ev => ev.type !== 'town_gate');
+      }
       setEvents(flatEvents);
       s.gameMode = 'TOWN_MENU';
       setGameMode('TOWN_MENU');
@@ -704,8 +718,7 @@ export default function MazeFirstPerson() {
         if ((s.keys['KeyE'] || s.keys['e']) && s.interactCooldown === 0 && near) {
           s.interactCooldown = 40;
           s.keys['KeyE'] = false; s.keys['e'] = false;
-          if (near.type === LOC_TYPE.PORT) { doEnterPort(near); }
-          else { doEnterLocation(near); }
+          doEnterLocation(near);
           s.animId = requestAnimationFrame(() => renderRef.current?.());
           return;
         }
@@ -1166,7 +1179,7 @@ export default function MazeFirstPerson() {
             onEvent={triggerEvent}
             onExit={doExitToOverworld}
           />
-          {/* 覆蓋面板（對話/商店/戰鬥）掛在同一容器 */}
+          {/* 覆蓋面板（對話/商店/戰鬥/港口）掛在同一容器 */}
           {activeDialogue && (
             <DialoguePanel lines={DIALOGUES[activeDialogue] || []} onClose={closeDialogue} />
           )}
@@ -1181,6 +1194,14 @@ export default function MazeFirstPerson() {
           {activeCombat && (
             <CombatPanel enemyId={activeCombat} player={playerRef.current} onCombatEnd={closeCombat} />
           )}
+          {activePort && (
+            <PortPanel
+              port={activePort}
+              locations={worldLocationsRef.current}
+              onTravel={doTravelToPort}
+              onClose={closePort}
+            />
+          )}
         </div>
       )}
 
@@ -1189,7 +1210,7 @@ export default function MazeFirstPerson() {
         <canvas ref={canvasRef} style={{ display: "block", borderRadius: "var(--border-radius-md)", background: "#0d0d1a" }} />
 
         {/* ── 港口旅行面板 ── */}
-        {activePort && (
+        {gameMode !== 'TOWN_MENU' && activePort && (
           <PortPanel
             port={activePort}
             locations={worldLocationsRef.current}

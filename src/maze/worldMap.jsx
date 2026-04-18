@@ -19,13 +19,14 @@ export const TERRAIN = {
 };
 
 export const LOC_TYPE = {
-  TOWN:    'town',
-  CAVE:    'cave',
-  TOWER:   'tower',
-  DUNGEON: 'dungeon',
-  CAPITAL: 'capital', // 國家首都
-  TEMPLE:  'temple',  // 神殿/遺跡
-  PORT:    'port',    // 港口（海上旅行）
+  TOWN:       'town',       // 中城鎮
+  TOWN_SMALL: 'town_small', // 小城鎮（村莊）
+  CAVE:       'cave',
+  TOWER:      'tower',
+  DUNGEON:    'dungeon',
+  CAPITAL:    'capital',    // 國家首都
+  TEMPLE:     'temple',     // 神殿/遺跡
+  PORT:       'port',       // 港口（海上旅行）
 };
 
 // 保留：手工地圖用

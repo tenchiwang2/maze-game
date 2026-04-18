@@ -42,23 +42,25 @@ const NO_PIXEL_BORDER = new Set([TERRAIN.ROAD, TERRAIN.DEEP_WATER]);
 
 // 地點顏色與圖示
 const LOC_COLORS = {
-  [LOC_TYPE.TOWN]:    { bg: '#f0c040', border: '#c08010', text: '#2a1800' },
-  [LOC_TYPE.CAVE]:    { bg: '#806040', border: '#503018', text: '#f0d0a0' },
-  [LOC_TYPE.TOWER]:   { bg: '#8040c0', border: '#5020a0', text: '#f0d0ff' },
-  [LOC_TYPE.DUNGEON]: { bg: '#c03030', border: '#901010', text: '#ffd0d0' },
-  [LOC_TYPE.CAPITAL]: { bg: '#ffe060', border: '#c07800', text: '#1a1000' },
-  [LOC_TYPE.TEMPLE]:  { bg: '#40a0c0', border: '#207090', text: '#e0f4ff' },
-  [LOC_TYPE.PORT]:    { bg: '#2080c0', border: '#104080', text: '#d0f0ff' },
+  [LOC_TYPE.TOWN]:       { bg: '#f0c040', border: '#c08010', text: '#2a1800' },
+  [LOC_TYPE.TOWN_SMALL]: { bg: '#c8a870', border: '#907040', text: '#2a1800' },
+  [LOC_TYPE.CAVE]:       { bg: '#806040', border: '#503018', text: '#f0d0a0' },
+  [LOC_TYPE.TOWER]:      { bg: '#8040c0', border: '#5020a0', text: '#f0d0ff' },
+  [LOC_TYPE.DUNGEON]:    { bg: '#c03030', border: '#901010', text: '#ffd0d0' },
+  [LOC_TYPE.CAPITAL]:    { bg: '#ffe060', border: '#c07800', text: '#1a1000' },
+  [LOC_TYPE.TEMPLE]:     { bg: '#40a0c0', border: '#207090', text: '#e0f4ff' },
+  [LOC_TYPE.PORT]:       { bg: '#2080c0', border: '#104080', text: '#d0f0ff' },
 };
 
 const LOC_ICONS = {
-  [LOC_TYPE.TOWN]:    '城',
-  [LOC_TYPE.CAVE]:    '穴',
-  [LOC_TYPE.TOWER]:   '塔',
-  [LOC_TYPE.DUNGEON]: '洞',
-  [LOC_TYPE.CAPITAL]: '都',
-  [LOC_TYPE.TEMPLE]:  '殿',
-  [LOC_TYPE.PORT]:    '港',
+  [LOC_TYPE.TOWN]:       '鎮',
+  [LOC_TYPE.TOWN_SMALL]: '村',
+  [LOC_TYPE.CAVE]:       '穴',
+  [LOC_TYPE.TOWER]:      '塔',
+  [LOC_TYPE.DUNGEON]:    '洞',
+  [LOC_TYPE.CAPITAL]:    '都',
+  [LOC_TYPE.TEMPLE]:     '殿',
+  [LOC_TYPE.PORT]:       '港',
 };
 
 // 國家標籤顏色
@@ -154,10 +156,11 @@ export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc) 
 
     const isNearby = nearbyLoc?.id === loc.id;
     const cl = LOC_COLORS[loc.type] || { bg: '#aaa', border: '#777', text: '#000' };
-    const isCapital = loc.type === LOC_TYPE.CAPITAL;
+    const isCapital  = loc.type === LOC_TYPE.CAPITAL;
+    const isSmall    = loc.type === LOC_TYPE.TOWN_SMALL;
 
-    // 首都：畫更大的標記
-    const pad = isCapital ? 0 : 1;
+    // 首都：最大；小城鎮：最小；其他：中等
+    const pad = isCapital ? 0 : isSmall ? 3 : 1;
     const sz = TS - pad * 2;
 
     // 靠近時發光
@@ -181,7 +184,7 @@ export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc) 
 
     // 圖示
     ctx.fillStyle = cl.text;
-    ctx.font = `bold ${Math.floor(TS * (isCapital ? 0.55 : 0.50))}px monospace`;
+    ctx.font = `bold ${Math.floor(TS * (isCapital ? 0.55 : isSmall ? 0.42 : 0.50))}px monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(LOC_ICONS[loc.type] || '?', sx + TS / 2, sy + TS / 2 - 1);
@@ -192,7 +195,7 @@ export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc) 
     ctx.shadowBlur = 4;
 
     ctx.fillStyle = isNearby ? '#fff' : nationColor;
-    ctx.font = `${isCapital ? 'bold ' : ''}${Math.max(8, Math.floor(TS * 0.35))}px monospace`;
+    ctx.font = `${isCapital ? 'bold ' : ''}${Math.max(7, Math.floor(TS * (isSmall ? 0.28 : 0.35)))}px monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.fillText(loc.label, sx + TS / 2, sy + TS + 2);
