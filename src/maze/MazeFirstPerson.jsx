@@ -24,6 +24,8 @@ import DialoguePanel  from './DialoguePanel.jsx';
 import CombatPanel    from './CombatPanel.jsx';
 import ShopPanel      from './ShopPanel.jsx';
 import InventoryPanel from './InventoryPanel.jsx';
+import StatsPanel     from './StatsPanel.jsx';
+import CampRestPanel, { calcRestRecovery } from './CampRestPanel.jsx';
 import TownPanel      from './TownPanel.jsx';
 import { on, emit } from './eventBus.js';
 import {
@@ -429,6 +431,8 @@ export default function MazeFirstPerson() {
   const [activeShop, setActiveShop]           = useState(null); // shopId
   const [activeCombat, setActiveCombat]       = useState(null); // enemyId
   const [showInventory, setShowInventory]     = useState(false);
+  const [showStats,     setShowStats]         = useState(false);
+  const [showCampRest,  setShowCampRest]      = useState(false);
   const [activePort, setActivePort]           = useState(null); // 港口旅行面板
   const [playerStats, setPlayerStats]         = useState(() => createPlayer()); // for re-render trigger
   const [questLog, setQuestLog]               = useState([]);
@@ -842,6 +846,14 @@ export default function MazeFirstPerson() {
         setShowInventory(true);
       }
 
+      // C 鍵開啟屬性
+      if ((s.keys['KeyC'] || s.keys['c']) && s.interactCooldown === 0) {
+        s.keys['KeyC'] = false; s.keys['c'] = false;
+        s.interactCooldown = 30;
+        s.uiPaused = true;
+        setShowStats(true);
+      }
+
       const mr = Math.round((s.py - 1) / 2), mc = Math.round((s.px - 1) / 2);
       eventsRef.current.forEach((ev, i) => {
         if (ev.triggered && !ev.repeatable) return;
@@ -1107,20 +1119,28 @@ export default function MazeFirstPerson() {
   }
 
   function doCampRest() {
-    const mins = minsToNextDawn(g.current.gameTime);
-    g.current.gameTime = advanceTime(g.current.gameTime, mins);
-    setGameTime(g.current.gameTime);
-    // 紮營同時完全回復
+    g.current.uiPaused = true;
+    setShowCampRest(true);
+  }
+
+  function applyCampRest(restMins) {
     const p = playerRef.current;
-    p.hp = p.maxHp;
-    p.mp = p.maxMp;
+    const { hp, mp } = calcRestRecovery(p, restMins);
+    p.hp = Math.min(p.maxHp, p.hp + hp);
+    p.mp = Math.min(p.maxMp, p.mp + mp);
+    g.current.gameTime = advanceTime(g.current.gameTime, restMins);
+    setGameTime(g.current.gameTime);
     setPlayerStats({ ...p });
+    setShowCampRest(false);
+    g.current.uiPaused = false;
+    g.current.interactCooldown = 30;
   }
 
   // ── UI 面板關閉回呼 ──
   function closeDialogue()  { setActiveDialogue(null); g.current.uiPaused = false; g.current.interactCooldown = 60; advanceGameTime(TIME_DIALOGUE); }
   function closeShop()      { setActiveShop(null);     g.current.uiPaused = false; g.current.interactCooldown = 60; advanceGameTime(TIME_SHOP); }
   function closeInventory() { setShowInventory(false); g.current.uiPaused = false; g.current.interactCooldown = 30; }
+  function closeStats()     { setShowStats(false);     g.current.uiPaused = false; g.current.interactCooldown = 30; }
 
   // ── 戰鬥事件訂閱 ──
   useEffect(() => {
@@ -1287,43 +1307,46 @@ export default function MazeFirstPerson() {
       <div style={{ overflowX: "auto", marginBottom: 10, position: "relative", display: gameMode === 'TOWN_MENU' ? "none" : "inline-block" }}>
         <canvas ref={canvasRef} style={{ display: "block", borderRadius: "var(--border-radius-md)", background: "#0d0d1a" }} />
 
-        {/* 人物動作面板（含時間）— 大地圖顯示完整版，其他模式只顯示時間 */}
+        {/* 人物動作面板（含時間） */}
         {(() => {
           const period = getTimePeriod(gameTime);
           return (
             <div style={{
               position: 'absolute', bottom: 16, left: 16,
-              background: 'rgba(8,8,18,0.92)',
-              border: `1px solid ${period.color}44`,
-              borderRadius: 8, padding: '10px 14px',
-              fontFamily: 'monospace', zIndex: 8, minWidth: 140,
+              background: 'rgba(8,8,18,0.55)',
+              backdropFilter: 'blur(6px)',
+              border: `1px solid ${period.color}30`,
+              borderRadius: 8, padding: '8px 10px',
+              fontFamily: 'monospace', zIndex: 8, minWidth: 120,
             }}>
               {/* 時間列 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: gameMode === 'OVERWORLD' ? 10 : 0 }}>
-                <span style={{ fontSize: 15, lineHeight: 1 }}>{period.icon}</span>
-                <span style={{ fontSize: 14, color: period.color, letterSpacing: '0.06em', fontWeight: 600 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 7 }}>
+                <span style={{ fontSize: 13, lineHeight: 1 }}>{period.icon}</span>
+                <span style={{ fontSize: 12, color: period.color, letterSpacing: '0.06em', fontWeight: 600 }}>
                   {formatTime(gameTime)}
                 </span>
-                <span style={{ fontSize: 10, color: `${period.color}aa`, marginLeft: 2 }}>
+                <span style={{ fontSize: 9, color: `${period.color}99` }}>
                   {period.label}
                 </span>
               </div>
 
-              {/* 動作區 — 僅大地圖 */}
-              {gameMode === 'OVERWORLD' && (
-                <>
-                  <div style={{ height: 1, background: `${period.color}22`, marginBottom: 8 }} />
-                  <button onClick={doCampRest} style={{
-                    width: '100%', padding: '7px 8px',
-                    background: 'rgba(60,60,100,0.35)',
-                    border: '1px solid rgba(100,100,180,0.5)',
-                    borderRadius: 6, fontSize: 12,
-                    color: '#aaaaff', cursor: 'pointer',
-                  }}>
-                    ⛺ 扎營休息
-                  </button>
-                </>
-              )}
+              {/* 快捷按鈕列 */}
+              <div style={{ display: 'flex', gap: 5 }}>
+                <button onClick={() => setShowInventory(true)} title="背包 [I]" style={{
+                  flex: 1, padding: '5px 0', borderRadius: 5, cursor: 'pointer', fontSize: 14,
+                  background: 'rgba(40,100,60,0.4)', border: '1px solid rgba(80,180,80,0.4)', color: '#88dd88',
+                }}>🎒</button>
+                <button onClick={() => setShowStats(true)} title="屬性 [C]" style={{
+                  flex: 1, padding: '5px 0', borderRadius: 5, cursor: 'pointer', fontSize: 14,
+                  background: 'rgba(40,80,160,0.4)', border: '1px solid rgba(80,140,255,0.4)', color: '#88ccff',
+                }}>📊</button>
+                {gameMode === 'OVERWORLD' && (
+                  <button onClick={doCampRest} title="扎營休息" style={{
+                    flex: 1, padding: '5px 0', borderRadius: 5, cursor: 'pointer', fontSize: 14,
+                    background: 'rgba(60,60,100,0.4)', border: '1px solid rgba(100,100,180,0.4)', color: '#aaaaff',
+                  }}>⛺</button>
+                )}
+              </div>
             </div>
           );
         })()}
@@ -1364,6 +1387,20 @@ export default function MazeFirstPerson() {
             player={playerRef.current}
             onClose={closeInventory}
             onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
+          />
+        )}
+        {showStats && (
+          <StatsPanel
+            player={playerRef.current}
+            onClose={closeStats}
+          />
+        )}
+        {showCampRest && (
+          <CampRestPanel
+            player={playerRef.current}
+            currentTime={gameTime}
+            onRest={applyCampRest}
+            onClose={() => { setShowCampRest(false); g.current.uiPaused = false; }}
           />
         )}
 

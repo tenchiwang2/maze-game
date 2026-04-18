@@ -21,7 +21,6 @@ const TABS = [
   { key: ITEM_CATEGORY.CONSUMABLE, label: '消耗品', color: '#88dd88' },
   { key: ITEM_CATEGORY.EQUIPMENT,  label: '裝備',   color: '#bbaaff' },
   { key: ITEM_CATEGORY.QUEST,      label: '任務',   color: '#ffd060' },
-  { key: 'stats',                  label: '屬性',   color: '#88ccff' },
 ];
 
 export default function InventoryPanel({ player, onClose, onPlayerUpdate }) {
@@ -203,35 +202,6 @@ export default function InventoryPanel({ player, onClose, onPlayerUpdate }) {
         </div>
       )}
 
-      {/* ── 屬性 ── */}
-      {tab === 'stats' && (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginBottom: 14 }}>
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 24, fontWeight: 700, color: '#f0e080' }}>Lv.{player.lv}</div>
-              <div style={{ fontSize: 10, color: '#888' }}>EXP {player.exp} / {player.lv * 100}</div>
-            </div>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            {[
-              ['❤ HP',  `${player.hp} / ${player.maxHp}`, '#ff8888'],
-              ['💧 MP',  `${player.mp} / ${player.maxMp}`, '#88aaff'],
-              ['⚔ ATK', player.atk,                        '#ffcc66'],
-              ['🛡 DEF', player.def,                        '#88ddcc'],
-              ['💨 SPD', player.spd,                        '#aaffaa'],
-              ['💰 金幣', player.gold,                      '#ffd060'],
-            ].map(([lbl, val, color]) => (
-              <div key={lbl} style={{
-                padding: '8px 12px', background: 'rgba(255,255,255,0.04)',
-                borderRadius: 6, border: '0.5px solid rgba(255,255,255,0.08)',
-              }}>
-                <div style={{ fontSize: 10, color: '#777', marginBottom: 2 }}>{lbl}</div>
-                <div style={{ fontSize: 15, fontWeight: 500, color }}>{val}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
