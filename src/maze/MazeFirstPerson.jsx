@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FOV, NUM_RAYS, MOVE_SPEED, TURN_SPEED, INTERACT_DIST, MM } from './constants.jsx';
-import { generateMaze, buildGrid, doorWorldPos } from './mazeGenerator.jsx';
+import { FOV, NUM_RAYS, MOVE_SPEED, TURN_SPEED, INTERACT_DIST, MM, WORLD_MOVE_SPEED, ENTRY_PROXIMITY, TORCH_RADIUS, AMBIENT } from './constants.jsx';
+import { generateMaze, buildGrid, doorWorldPos, resolveEvents } from './mazeGenerator.jsx';
+import { loadTexture, TexUpload, ZoneTexRow } from './textures.jsx';
 import {
   castRays, renderFloorCeiling, renderWalls,
   getSpriteInfo,
@@ -8,101 +9,70 @@ import {
   drawMinimap, drawHUD,
 } from './renderer.jsx';
 import { DEFAULT_FIXED, DEFAULT_GLOBAL, EVENT_TYPES, EVENT_ICONS } from './defaults.jsx';
+import { FACTORIES, FACTORY_IDS } from './mazeFactory.jsx';
+// ── RPG 系統 ──
+import { isPassable, findWorldSpawn, getNearbyLocation, LOC_TYPE } from './worldMap.jsx';
+import { WORLD_DEF, DIALOGUES, SHOPS, QUEST_DEFS } from './worldData.jsx';
+import { WORLD_FACTORIES, WORLD_FACTORY_IDS } from './worldFactory.jsx';
+import { drawOverworld } from './OverworldRenderer.jsx';
+import { createPlayer, gainExp, addItem, recordKill, checkQuestStep } from './playerState.jsx';
+import { rollLoot } from './combatEngine.jsx';
+import { ITEMS } from './itemData.jsx';
+import { ENEMIES } from './enemyData.jsx';
+import DialoguePanel  from './DialoguePanel.jsx';
+import CombatPanel    from './CombatPanel.jsx';
+import ShopPanel      from './ShopPanel.jsx';
+import InventoryPanel from './InventoryPanel.jsx';
+import TownPanel      from './TownPanel.jsx';
 
-function loadTexture(file) {
-  return new Promise(resolve => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const img = new Image();
-      img.onload = () => {
-        const w = img.naturalWidth || TEX_W;
-        const h = img.naturalHeight || TEX_H;
-        // offscreen canvas for drawImage wall slicing
-        const oc = document.createElement('canvas');
-        oc.width = w; oc.height = h;
-        const octx = oc.getContext('2d');
-        octx.drawImage(img, 0, 0);
-        // pixel array for floor casting
-        const id = octx.getImageData(0, 0, w, h);
-        resolve({ loaded: true, canvas: oc, data: id.data, w, h, src: e.target.result });
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-  });
+// ─────────────────────────────────────────────
+//  單張地圖建立輔助（供多地圖模式使用）
+// ─────────────────────────────────────────────
+function buildSingleMap(cols, rows, fixedRooms, randomCount, safeMin, safeMax, defDoorCount, defDoorOpen) {
+  const { walls, rooms, doorPositions } = generateMaze(cols, rows, fixedRooms, randomCount, safeMin, safeMax, defDoorCount, defDoorOpen);
+  const doors = doorPositions.map(dp => ({ ...dp, closed: dp.defaultOpen === false }));
+  const { grid, zoneMap, doorMap } = buildGrid(walls, cols, rows, rooms, doors);
+  return {
+    walls, rooms, doors, doorMap, grid, zoneMap,
+    eCell: { r: 0, c: 0 },
+    xCell: { r: rows - 1, c: cols - 1 },
+    entryGX: 1, entryGY: 1,
+    exitGX: 2 * (cols - 1) + 1,
+    exitGY: 2 * (rows - 1) + 1,
+    events: [],
+  };
 }
 
-// ─────────────────────────────────────────────
-//  Texture Upload widget  (single face)
-// ─────────────────────────────────────────────
-function TexUpload({ label, texInfo, onLoad }) {
-  return (
-    <label style={{
-      display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-      cursor: "pointer", width: 64,
-    }}>
-      <div style={{
-        width: 60, height: 60, border: "0.5px solid var(--color-border-secondary)",
-        borderRadius: "var(--border-radius-md)", overflow: "hidden",
-        background: "var(--color-background-secondary)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
-        {texInfo?.src
-          ? <img src={texInfo.src} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-          : <span style={{ fontSize: 20, color: "var(--color-text-tertiary)" }}>+</span>
+// 在目標格 (gx, gy) 附近找到最近的可通行格，回傳 { px, py }
+// minDist=2 時跳過傳送門本身的格子，避免傳送後立刻站在傳送門上
+function findSafeSpawn(grid, gx, gy, minDist = 0) {
+  const H = grid.length, W = grid[0].length;
+  for (let d = minDist; d <= 6; d++) {
+    for (let dy = -d; dy <= d; dy++) {
+      for (let dx = -d; dx <= d; dx++) {
+        if (Math.abs(dy) !== d && Math.abs(dx) !== d) continue;
+        const ny = gy + dy, nx = gx + dx;
+        if (ny >= 1 && ny < H - 1 && nx >= 1 && nx < W - 1 && grid[ny][nx] === 0) {
+          return { px: nx + 0.5, py: ny + 0.5 };
         }
-      </div>
-      <span style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>{label}</span>
-      <input type="file" accept="image/*" style={{ display: "none" }}
-        onChange={e => e.target.files[0] && loadTexture(e.target.files[0]).then(onLoad)} />
-    </label>
-  );
-}
-
-// ─────────────────────────────────────────────
-//  Texture zone row  (wall + ceil + floor)
-// ─────────────────────────────────────────────
-function ZoneTexRow({ label, zone, onChange, accent, showDoor }) {
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 8, padding: "8px 0",
-      borderBottom: "0.5px solid var(--color-border-tertiary)",
-    }}>
-      <div style={{ width: 4, height: 36, borderRadius: 2, background: accent || "#888", flexShrink: 0 }} />
-      <span style={{ fontSize: 12, color: "var(--color-text-secondary)", minWidth: 68, lineHeight: 1.3 }}>{label}</span>
-      <TexUpload label="牆壁" texInfo={zone?.wall} onLoad={t => onChange({ ...zone, wall: t })} />
-      <TexUpload label="天花板" texInfo={zone?.ceil} onLoad={t => onChange({ ...zone, ceil: t })} />
-      <TexUpload label="地板" texInfo={zone?.floor} onLoad={t => onChange({ ...zone, floor: t })} />
-      {showDoor && (
-        <TexUpload label="房間門" texInfo={zone?.door} onLoad={t => onChange({ ...zone, door: t })} />
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────
-//  resolve events helper
-// ─────────────────────────────────────────────
-function resolveEvents(rooms, fixedRms, globalEvCfg) {
-  const out = [];
-  fixedRms.forEach((fm, rIdx) => {
-    const placed = rooms.find(r => r.fixed && r.origIdx === rIdx);
-    if (!placed) return;
-    (fm.events || []).forEach(ev => {
-      let destR = ev.destR, destC = ev.destC;
-      if (ev.destRoomIdx != null) {
-        const dp = rooms.find(r => r.fixed && r.origIdx === ev.destRoomIdx);
-        if (dp) { destR = dp.r + (ev.destDr || 0); destC = dp.c + (ev.destDc || 0); }
       }
-      out.push({ ...ev, r: placed.r + ev.dr, c: placed.c + ev.dc, triggered: false, roomLabel: `房間${rIdx + 1}`, destR, destC });
-    });
-  });
-  globalEvCfg.forEach(ev => out.push({ ...ev, triggered: false }));
-  return out;
+    }
+  }
+  return { px: 1.5, py: 1.5 };
+}
+
+// 將指定地圖快照的資料複製到遊戲狀態 s
+function syncCurrentMap(s) {
+  const map = s.maps[s.currentMapIdx];
+  s.walls = map.walls; s.rooms = map.rooms; s.doors = map.doors;
+  s.doorMap = map.doorMap; s.grid = map.grid; s.zoneMap = map.zoneMap;
+  s.eCell = map.eCell; s.xCell = map.xCell;
+  s.entryGX = map.entryGX; s.entryGY = map.entryGY;
+  s.exitGX = map.exitGX; s.exitGY = map.exitGY;
 }
 
 // ─────────────────────────────────────────────
-//  Maze data display panel
+//  迷宮資料顯示面板
 
 function MazeDataPanel({ data, walls }) {
   const [open, setOpen] = useState(false);
@@ -131,24 +101,24 @@ function MazeDataPanel({ data, walls }) {
   const roomTypeColor = (type) =>
     type.startsWith("固定") ? "rgba(216,90,48,0.85)" : "rgba(80,70,160,0.75)";
 
-  // Build wall grid string for "grid view"
+  // 建立平面圖的牆壁字元格子字串
   const renderGrid = () => {
     if (!walls) return null;
     const rows = walls.length, cols = walls[0].length;
     const W = 2 * cols + 1, H = 2 * rows + 1;
     const ch = Array.from({ length: H }, () => Array(W).fill(' '));
-    // borders
+    // 邊框
     for (let c = 0; c < W; c++) { ch[0][c] = '─'; ch[H - 1][c] = '─'; }
     for (let r = 0; r < H; r++) { ch[r][0] = '│'; ch[r][W - 1] = '│'; }
     ch[0][0] = '┌'; ch[0][W - 1] = '┐'; ch[H - 1][0] = '└'; ch[H - 1][W - 1] = '┘';
-    // inner walls
+    // 內部牆壁
     for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
       const gr = 2 * r + 1, gc = 2 * c + 1;
       ch[gr][gc] = '·';
       if (walls[r][c].right && c < cols - 1) ch[gr][gc + 1] = '│';
       if (walls[r][c].bottom && r < rows - 1) ch[gr + 1][gc] = '─';
     }
-    // room markers
+    // 房間標記
     if (data.rooms) {
       data.rooms.forEach((rm, i) => {
         const label = rm.type.startsWith("固定") ? `R${i + 1}` : 'r';
@@ -157,9 +127,9 @@ function MazeDataPanel({ data, walls }) {
         }
       });
     }
-    // entry/exit
+    // 入口/出口
     ch[1][1] = 'S'; ch[2 * (rows - 1) + 1][2 * (cols - 1) + 1] = 'E';
-    // doors
+    // 門
     if (data.doors) data.doors.forEach(d => {
       const gy = d.side === 'bottom' ? 2 * d.r + 2 : 2 * d.r + 1;
       const gx = d.side === 'bottom' ? 2 * d.c + 1 : 2 * d.c + 2;
@@ -192,7 +162,7 @@ function MazeDataPanel({ data, walls }) {
           padding: "12px",
           background: "var(--color-background-primary)",
         }}>
-          {/* Summary row */}
+          {/* 摘要列 */}
           <div style={{ display: "flex", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
             {[
               ["地圖大小", `${data.size.cols} × ${data.size.rows}`],
@@ -213,7 +183,7 @@ function MazeDataPanel({ data, walls }) {
             ))}
           </div>
 
-          {/* Tabs */}
+          {/* 分頁標籤 */}
           <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
             {tabBtn("rooms", "房間列表")}
             {tabBtn("doors", "門列表")}
@@ -222,7 +192,7 @@ function MazeDataPanel({ data, walls }) {
             {tabBtn("json", "JSON")}
           </div>
 
-          {/* Tab content */}
+          {/* 分頁內容 */}
           <div style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
 
             {tab === "rooms" && (
@@ -343,7 +313,85 @@ function MazeDataPanel({ data, walls }) {
 }
 
 // ─────────────────────────────────────────────
-//  Default data
+//  港口旅行面板
+
+function PortPanel({ port, locations, onTravel, onClose }) {
+  const dests = locations.filter(l => l.type === LOC_TYPE.PORT && l.id !== port.id);
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: 'rgba(0,8,20,0.82)',
+    }}>
+      <div style={{
+        background: 'linear-gradient(160deg, rgba(8,24,50,0.98) 0%, rgba(4,16,36,0.98) 100%)',
+        border: '1.5px solid rgba(60,160,230,0.55)',
+        borderRadius: 12,
+        padding: '20px 26px',
+        minWidth: 280,
+        maxWidth: 360,
+        boxShadow: '0 0 32px rgba(40,120,200,0.25)',
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: '#60c8ff', marginBottom: 4 }}>
+          ⚓ {port.label}
+        </div>
+        <div style={{ fontSize: 11, color: '#4880a0', marginBottom: 16 }}>
+          {port.nationLabel && `[${port.nationLabel}]  `}選擇目的港口出航：
+        </div>
+
+        {dests.length === 0 ? (
+          <div style={{ color: '#405060', fontSize: 12, marginBottom: 12 }}>此港暫無航線</div>
+        ) : dests.map(dest => {
+          const dist = Math.round(Math.hypot(dest.wx - port.wx, dest.wy - port.wy));
+          return (
+            <button
+              key={dest.id}
+              onClick={() => onTravel(dest)}
+              style={{
+                display: 'block', width: '100%', marginBottom: 8,
+                padding: '9px 14px',
+                background: 'rgba(20,55,90,0.75)',
+                border: '1px solid rgba(60,150,220,0.35)',
+                borderRadius: 7,
+                color: '#b8e4ff',
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}>
+              <span style={{ marginRight: 8 }}>⛵</span>
+              {dest.label}
+              {dest.nationLabel && (
+                <span style={{ fontSize: 10, color: '#407090', marginLeft: 8 }}>
+                  [{dest.nationLabel}]
+                </span>
+              )}
+              <span style={{ float: 'right', fontSize: 11, color: '#406070' }}>
+                ~{dist} 海里
+              </span>
+            </button>
+          );
+        })}
+
+        <button
+          onClick={onClose}
+          style={{
+            marginTop: 4, padding: '6px 18px',
+            background: 'none',
+            border: '1px solid rgba(60,90,110,0.6)',
+            borderRadius: 6,
+            color: '#406070',
+            fontSize: 12,
+            cursor: 'pointer',
+          }}>
+          留在港口
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+//  預設資料
 
 export default function MazeFirstPerson() {
   const canvasRef = useRef(null);
@@ -359,10 +407,35 @@ export default function MazeFirstPerson() {
   const [won, setWon] = useState(false);
   const [log, setLog] = useState([]);
   const [mazeData, setMazeData] = useState(null);
-  // textures[0]=corridor, textures[N]=fixed room origIdx+1  { wall,ceil,floor,door }
+  // textures[0]=走廊，textures[N]=固定房間 origIdx+1  { wall,ceil,floor,door }
   const [textures, setTextures] = useState([{}, {}, {}, {}]);
   const [defaultDoorCount, setDefaultDoorCount] = useState(2);
   const [defaultDoorOpen, setDefaultDoorOpen] = useState(true);
+  const [factoryMode, setFactoryMode] = useState(FACTORY_IDS.CUSTOM);
+  const [currentMapIdx, setCurrentMapIdx] = useState(0);
+  const [transitionPrompt, setTransitionPrompt] = useState(null); // null | 'fwd' | 'bwd'
+  // ── RPG 狀態 ──
+  const [gameMode, setGameMode] = useState('OVERWORLD'); // 'OVERWORLD' | 'DUNGEON_INTERIOR' | 'TOWN_MENU'
+  const [activeTownLoc, setActiveTownLoc] = useState(null);
+  const [nearbyLocation, setNearbyLocation]   = useState(null);
+  const [activeDialogue, setActiveDialogue]   = useState(null); // dialogueId
+  const [activeShop, setActiveShop]           = useState(null); // shopId
+  const [activeCombat, setActiveCombat]       = useState(null); // enemyId
+  const [showInventory, setShowInventory]     = useState(false);
+  const [activePort, setActivePort]           = useState(null); // 港口旅行面板
+  const [playerStats, setPlayerStats]         = useState(() => createPlayer()); // for re-render trigger
+  const [questLog, setQuestLog]               = useState([]);
+  const [levelUpMsg, setLevelUpMsg]           = useState('');
+
+  // ── 世界地圖工廠 ──
+  const [worldFactoryId, setWorldFactoryId] = useState(WORLD_FACTORY_IDS.GRAND_WORLD);
+  const [worldSeed, setWorldSeed]           = useState(1);
+
+  const playerRef       = useRef(createPlayer());
+  const nearbyLocRef    = useRef(null);
+  const worldTerrainRef = useRef(null);
+  // 當前世界地點（含工廠產生的隨機位置）
+  const worldLocationsRef = useRef(WORLD_DEF.locations);
 
   const g = useRef({
     walls: null, grid: null, zoneMap: null, rooms: [], doors: [],
@@ -372,6 +445,17 @@ export default function MazeFirstPerson() {
     entryGX: 1, entryGY: 1, exitGX: 0, exitGY: 0,
     eCell: { r: 0, c: 0 }, xCell: { r: 0, c: 0 },
     cols, rows, interactCooldown: 0,
+    multiMap: false, maps: [], currentMapIdx: 0,
+    transitionPrompt: null, wasOnPortal: false,
+    // RPG 欄位
+    gameMode: 'OVERWORLD',
+    wx: WORLD_DEF.startX + 0.5,
+    wy: WORLD_DEF.startY + 0.5,
+    returnWX: WORLD_DEF.startX + 0.5,
+    returnWY: WORLD_DEF.startY + 0.5,
+    activeLocationId: null,
+    lightCfg: { ambient: AMBIENT, torchRadius: TORCH_RADIUS },
+    uiPaused: false,
   });
   const renderRef = useRef(null);
   const eventsRef = useRef(events);
@@ -381,12 +465,212 @@ export default function MazeFirstPerson() {
 
 
   function triggerEvent(ev, idx) {
-    setEvents(prev => prev.map((e, i) => i === idx ? { ...e, triggered: true } : e));
+    if (!ev.repeatable) {
+      setEvents(prev => prev.map((e, i) => i === idx ? { ...e, triggered: true } : e));
+    }
     setLog(prev => [{ id: Date.now(), type: ev.type, roomLabel: ev.roomLabel, text: (ev.text || "").split("\n")[0] }, ...prev].slice(0, 30));
+
     if (ev.type === 'teleport' && ev.destR != null) {
       g.current.px = 2 * ev.destC + 1 + 0.5; g.current.py = 2 * ev.destR + 1 + 0.5;
     }
     if (ev.type === 'win' && !g.current.won) { g.current.won = true; setWon(true); }
+
+    // ── RPG 事件 ──
+    if (ev.type === 'npc' && ev.dialogueId) {
+      g.current.uiPaused = true;
+      setActiveDialogue(ev.dialogueId);
+    }
+    if (ev.type === 'shop' && ev.shopId) {
+      g.current.uiPaused = true;
+      setActiveShop(ev.shopId);
+    }
+    if (ev.type === 'combat' && ev.enemyId) {
+      g.current.uiPaused = true;
+      setActiveCombat(ev.enemyId);
+    }
+    if (ev.type === 'chest') {
+      const p = playerRef.current;
+      addItem(p, ev.itemId, ev.qty ?? 1);
+      const itemName = ITEMS[ev.itemId]?.name || ev.itemId;
+      setLog(prev => [{ id: Date.now() + 1, type: 'chest', text: `獲得 ${itemName} ×${ev.qty ?? 1}` }, ...prev].slice(0, 30));
+      setPlayerStats({ ...p });
+      // 任務：collect 進度
+      QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'collect', { itemId: ev.itemId }));
+    }
+    if (ev.type === 'town_gate') {
+      doExitToOverworld();
+    }
+    if (ev.type === 'port_travel') {
+      g.current.uiPaused = true;
+      setActivePort(worldLocationsRef.current.find(l => l.id === g.current.activeLocationId) ?? null);
+    }
+  }
+
+  // ── 世界地圖重新產生 ──────────────────────
+  const regenerateWorld = useCallback((factoryId, seed) => {
+    const factory = WORLD_FACTORIES.find(f => f.id === factoryId) ?? WORLD_FACTORIES[0];
+    const { terrain, locations: locs } = factory.generate(seed, WORLD_DEF.cols, WORLD_DEF.rows);
+    // 保留 dungeonCfg 等資料，只覆蓋 wx/wy 位置
+    const merged = WORLD_DEF.locations.map((loc, i) => ({
+      ...loc,
+      wx: locs[i]?.wx ?? loc.wx,
+      wy: locs[i]?.wy ?? loc.wy,
+    }));
+    worldTerrainRef.current = terrain;
+    worldLocationsRef.current = merged;
+    // 找到可通行出生點（靠近地圖中心）
+    const spawn = findWorldSpawn(terrain, WORLD_DEF.cols / 2, WORLD_DEF.rows / 2);
+    g.current.wx = spawn.wx; g.current.wy = spawn.wy;
+    g.current.returnWX = spawn.wx; g.current.returnWY = spawn.wy;
+    nearbyLocRef.current = null;
+    setNearbyLocation(null);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── 港口海上旅行 ──────────────────────────
+  function doEnterPort(loc) {
+    g.current.uiPaused = true;
+    setActivePort(loc);
+  }
+
+  function doTravelToPort(destLoc) {
+    const s = g.current;
+    const spawn = findWorldSpawn(worldTerrainRef.current, destLoc.wx, destLoc.wy);
+    s.wx = spawn.wx;
+    s.wy = spawn.wy;
+    s.returnWX = spawn.wx; s.returnWY = spawn.wy;
+    s.gameMode = 'OVERWORLD';
+    s.activeLocationId = null;
+    s.uiPaused = false;
+    nearbyLocRef.current = null;
+    setNearbyLocation(null);
+    setActivePort(null);
+    setActiveTownLoc(null);
+    setGameMode('OVERWORLD');
+    setLog(prev => [{ id: Date.now(), type: 'message', text: `⚓ 抵達 ${destLoc.label}` }, ...prev].slice(0, 30));
+  }
+
+  function closePort() {
+    g.current.uiPaused = false;
+    setActivePort(null);
+  }
+
+  // ── 離開地城，返回大地圖 ───────────────────
+  function doExitToOverworld() {
+    const s = g.current;
+    s.gameMode = 'OVERWORLD';
+    s.wx = s.returnWX; s.wy = s.returnWY;
+    s.activeLocationId = null;
+    s.won = false; s.grid = null;
+    s.uiPaused = false;
+    s.transitionPrompt = null; s.wasOnPortal = false;
+    setGameMode('OVERWORLD');
+    setActiveTownLoc(null);
+    setWon(false);
+    setTransitionPrompt(null);
+    setActiveDialogue(null);
+    setActiveShop(null);
+    setActiveCombat(null);
+    setShowInventory(false);
+  }
+
+  // ── 進入地點（由大地圖觸發）───────────────
+  function doEnterLocation(loc) {
+    const s = g.current;
+    const cfg = loc.dungeonCfg;
+
+    s.returnWX = s.wx; s.returnWY = s.wy;
+    s.activeLocationId = loc.id;
+
+    // 城鎮/首都/小城鎮/港口 → 選單模式，不產生迷宮
+    if (loc.type === LOC_TYPE.TOWN || loc.type === LOC_TYPE.TOWN_SMALL || loc.type === LOC_TYPE.CAPITAL || loc.type === LOC_TYPE.PORT) {
+      let flatEvents;
+      if (loc.type === LOC_TYPE.PORT) {
+        flatEvents = [{ id: 'port_travel', type: 'port_travel', text: '出航', icon: '⚓', repeatable: true }];
+      } else {
+        flatEvents = [
+          ...(cfg.fixedRooms ?? []).flatMap(rm => rm.events ?? []),
+          ...(cfg.globalEvents ?? []),
+        ].filter(ev => ev.type !== 'town_gate');
+      }
+      setEvents(flatEvents);
+      s.gameMode = 'TOWN_MENU';
+      setGameMode('TOWN_MENU');
+      setActiveTownLoc(loc);
+      setNearbyLocation(null);
+      nearbyLocRef.current = null;
+      const p = playerRef.current;
+      QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'reach', { locationId: loc.id }));
+      return;
+    }
+    s.lightCfg = {
+      ambient:     cfg.ambient     ?? AMBIENT,
+      torchRadius: cfg.torchRadius ?? TORCH_RADIUS,
+    };
+    s.won = false; s.t = 0; s.keys = {}; s.interactCooldown = 0;
+    s.transitionPrompt = null; s.wasOnPortal = false; s.uiPaused = false;
+    setTransitionPrompt(null); setWon(false); setLog([]);
+
+    const safeMin = cfg.safeMin ?? 2;
+    const safeMax = cfg.safeMax ?? 4;
+
+    if (cfg.multiMap) {
+      const floorCount = cfg.floorCount ?? 3;
+      s.multiMap = true;
+      s.maps = Array.from({ length: floorCount }, () =>
+        buildSingleMap(cfg.cols, cfg.rows, cfg.fixedRooms ?? [], cfg.randomCount ?? 1, safeMin, safeMax, cfg.doorCount ?? 1, cfg.doorOpen ?? true)
+      );
+      const exitGX = 2 * (cfg.cols - 1) + 1;
+      const exitGY = 2 * (cfg.rows - 1) + 1;
+      for (let fi = 1; fi < floorCount; fi++) {
+        if (fi % 2 !== 0) {
+          // 奇數層：入口右下，出口左上
+          s.maps[fi].entryGX = exitGX; s.maps[fi].entryGY = exitGY;
+          s.maps[fi].exitGX  = 1;      s.maps[fi].exitGY  = 1;
+          s.maps[fi].eCell   = { r: cfg.rows - 1, c: cfg.cols - 1 };
+          s.maps[fi].xCell   = { r: 0, c: 0 };
+        } else {
+          // 偶數層：入口左上，出口右下（與第 0 層相同）
+          s.maps[fi].entryGX = 1;      s.maps[fi].entryGY = 1;
+          s.maps[fi].exitGX  = exitGX; s.maps[fi].exitGY  = exitGY;
+          s.maps[fi].eCell   = { r: 0, c: 0 };
+          s.maps[fi].xCell   = { r: cfg.rows - 1, c: cfg.cols - 1 };
+        }
+      }
+      s.currentMapIdx = 0;
+      syncCurrentMap(s);
+      const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
+      s.px = sp.px; s.py = sp.py; s.angle = Math.PI / 4;
+      s.cols = cfg.cols; s.rows = cfg.rows;
+      setCurrentMapIdx(0); setEvents([]); setMazeData(null);
+    } else {
+      s.multiMap = false; s.maps = []; s.currentMapIdx = 0;
+      setCurrentMapIdx(0);
+      const fr = cfg.fixedRooms ?? [];
+      const { walls, rooms, doorPositions } = generateMaze(
+        cfg.cols, cfg.rows, fr, cfg.randomCount ?? 3, safeMin, safeMax, cfg.doorCount ?? 2, cfg.doorOpen ?? true
+      );
+      const doors = doorPositions.map(dp => ({ ...dp, closed: dp.defaultOpen === false }));
+      s.walls = walls; s.rooms = rooms; s.doors = doors;
+      const { grid, zoneMap, doorMap } = buildGrid(walls, cfg.cols, cfg.rows, rooms, doors);
+      s.grid = grid; s.zoneMap = zoneMap; s.doorMap = doorMap;
+      s.cols = cfg.cols; s.rows = cfg.rows;
+      const xCell = { r: cfg.rows - 1, c: cfg.cols - 1 };
+      s.eCell = { r: 0, c: 0 }; s.xCell = xCell;
+      s.entryGX = 1; s.entryGY = 1;
+      s.exitGX = 2 * xCell.c + 1; s.exitGY = 2 * xCell.r + 1;
+      s.px = 1.5; s.py = 1.5; s.angle = Math.PI / 4;
+      setEvents(resolveEvents(rooms, fr, cfg.globalEvents ?? []));
+      setMazeData(null);
+    }
+
+    s.gameMode = 'DUNGEON_INTERIOR';
+    setGameMode('DUNGEON_INTERIOR');
+    setNearbyLocation(null);
+    nearbyLocRef.current = null;
+
+    // 任務進度：reach
+    const p = playerRef.current;
+    QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'reach', { locationId: loc.id }));
   }
 
   function toggleDoor(idx) {
@@ -394,19 +678,62 @@ export default function MazeFirstPerson() {
     s.doors = s.doors.map((d, i) => i === idx ? { ...d, closed: !d.closed } : d);
     const { grid, zoneMap, doorMap } = buildGrid(s.walls, s.cols, s.rows, s.rooms, s.doors);
     s.grid = grid; s.zoneMap = zoneMap; s.doorMap = doorMap;
+    // 多地圖：同步回當前地圖快照
+    if (s.multiMap && s.maps[s.currentMapIdx]) {
+      const m = s.maps[s.currentMapIdx];
+      m.doors = s.doors; m.grid = grid; m.zoneMap = zoneMap; m.doorMap = doorMap;
+    }
     setLog(prev => [{ id: Date.now(), type: "door", text: `門已${s.doors[idx].closed ? "關閉" : "開啟"}` }, ...prev].slice(0, 30));
   }
 
   renderRef.current = () => {
     const canvas = canvasRef.current; if (!canvas) return;
-    const s = g.current; if (!s.grid) return;
+    const s = g.current;
     const ctx = canvas.getContext("2d");
     const W = canvas.width, H = canvas.height;
-    const gW = s.grid[0].length, gH = s.grid.length;
     s.t++;
     if (s.interactCooldown > 0) s.interactCooldown--;
 
-    if (!s.won) {
+    // ── 大地圖模式 ────────────────────────────
+    if (s.gameMode === 'OVERWORLD') {
+      const terrain = worldTerrainRef.current;
+      if (!terrain) { s.animId = requestAnimationFrame(() => renderRef.current?.()); return; }
+
+      if (!s.uiPaused) {
+        const spd = WORLD_MOVE_SPEED;
+        const dx = (s.keys['d'] || s.keys['ArrowRight'] ? spd : 0) - (s.keys['a'] || s.keys['ArrowLeft'] ? spd : 0);
+        const dy = (s.keys['s'] || s.keys['ArrowDown']  ? spd : 0) - (s.keys['w'] || s.keys['ArrowUp']   ? spd : 0);
+        const nx = s.wx + dx, ny = s.wy + dy;
+        if (isPassable(terrain, nx, s.wy)) s.wx = nx;
+        if (isPassable(terrain, s.wx, ny)) s.wy = ny;
+
+        // 靠近地點偵測
+        const near = getNearbyLocation(worldLocationsRef.current, s.wx, s.wy, ENTRY_PROXIMITY);
+        if (near?.id !== nearbyLocRef.current?.id) {
+          nearbyLocRef.current = near;
+          setNearbyLocation(near);
+        }
+
+        // E 鍵進入地點
+        if ((s.keys['KeyE'] || s.keys['e']) && s.interactCooldown === 0 && near) {
+          s.interactCooldown = 40;
+          s.keys['KeyE'] = false; s.keys['e'] = false;
+          doEnterLocation(near);
+          s.animId = requestAnimationFrame(() => renderRef.current?.());
+          return;
+        }
+      }
+
+      drawOverworld(ctx, W, H, terrain, worldLocationsRef.current, s.wx, s.wy, nearbyLocRef.current);
+      s.animId = requestAnimationFrame(() => renderRef.current?.());
+      return;
+    }
+
+    // ── 地城內部模式 ──────────────────────────
+    if (!s.grid) { s.animId = requestAnimationFrame(() => renderRef.current?.()); return; }
+    const gW = s.grid[0].length, gH = s.grid.length;
+
+    if (!s.won && !s.uiPaused) {
       const cos = Math.cos(s.angle), sin = Math.sin(s.angle);
       const mv = (nx, ny) => {
         if (s.grid[Math.floor(s.py)][Math.floor(nx)] === 0) s.px = nx;
@@ -417,9 +744,51 @@ export default function MazeFirstPerson() {
       if (s.keys["ArrowLeft"] || s.keys["a"]) s.angle -= TURN_SPEED;
       if (s.keys["ArrowRight"] || s.keys["d"]) s.angle += TURN_SPEED;
 
-      if (Math.floor(s.px) === s.exitGX && Math.floor(s.py) === s.exitGY) {
-        s.won = true; setWon(true);
+      const onExitPortal  = Math.floor(s.px) === s.exitGX  && Math.floor(s.py) === s.exitGY;
+      const onEntryPortal = s.multiMap && s.currentMapIdx > 0
+        && Math.floor(s.px) === s.entryGX && Math.floor(s.py) === s.entryGY;
+
+      // 玩家離開傳送門後才能再觸發詢問
+      if (s.wasOnPortal && !onExitPortal && !onEntryPortal) {
+        s.wasOnPortal = false;
       }
+      // 玩家離開傳送門時自動收起詢問框
+      if (s.transitionPrompt && !onExitPortal && !onEntryPortal) {
+        s.transitionPrompt = null;
+        setTransitionPrompt(null);
+      }
+      // 首次踩上傳送門時顯示詢問框
+      if (!s.wasOnPortal && !s.transitionPrompt) {
+        if (onExitPortal) {
+          if (s.multiMap && s.currentMapIdx < s.maps.length - 1) {
+            // 多層：前往下一層
+            s.transitionPrompt = 'fwd';
+            setTransitionPrompt('fwd');
+          } else if (s.gameMode === 'DUNGEON_INTERIOR') {
+            // RPG 模式：出口 → 返回大地圖
+            doExitToOverworld();
+            s.animId = requestAnimationFrame(() => renderRef.current?.());
+            return;
+          } else {
+            // 舊的「迷宮遊戲」模式
+            s.won = true; setWon(true);
+          }
+          s.wasOnPortal = true;
+        } else if (onEntryPortal) {
+          s.transitionPrompt = 'bwd';
+          setTransitionPrompt('bwd');
+          s.wasOnPortal = true;
+        }
+      }
+
+      // I 鍵開啟背包
+      if ((s.keys['KeyI'] || s.keys['i']) && s.interactCooldown === 0) {
+        s.keys['KeyI'] = false; s.keys['i'] = false;
+        s.interactCooldown = 30;
+        s.uiPaused = true;
+        setShowInventory(true);
+      }
+
       const mr = Math.round((s.py - 1) / 2), mc = Math.round((s.px - 1) / 2);
       eventsRef.current.forEach((ev, i) => {
         if (ev.triggered && !ev.repeatable) return;
@@ -440,15 +809,24 @@ export default function MazeFirstPerson() {
     }
 
     const txs = textureRef.current;
+
+    // 火把閃爍（多頻正弦疊加，利用現有 s.t 計數器）
+    const flicker = 1.0
+      + 0.06 * Math.sin(s.t * 0.27)
+      + 0.04 * Math.sin(s.t * 0.71)
+      + 0.02 * Math.sin(s.t * 1.37);
+    const torchBright = Math.max(0.7, Math.min(1.1, flicker));
+
+    const lightCfg = s.lightCfg || {};
     const rays = castRays(s.grid, s.zoneMap, s.doorMap, s.px, s.py, s.angle, gW, gH);
 
-    // 1. Floor + ceiling (ImageData per-pixel)
-    renderFloorCeiling(ctx, W, H, s.px, s.py, s.angle, s.zoneMap, gW, gH, txs);
+    // 1. 地板 + 天花板（逐像素 ImageData）
+    renderFloorCeiling(ctx, W, H, s.px, s.py, s.angle, s.zoneMap, gW, gH, txs, torchBright, lightCfg);
 
-    // 2. Walls (texture slices or flat colour)
-    renderWalls(ctx, W, H, rays, txs, s.doors);
+    // 2. 牆壁（貼圖切片或平面填色）
+    renderWalls(ctx, W, H, rays, txs, s.doors, torchBright, lightCfg);
 
-    // 3. Sprites
+    // 3. 精靈
     const sprites = [
       { type: "entry", wx: s.entryGX + 0.5, wy: s.entryGY + 0.5 },
       { type: "exit", wx: s.exitGX + 0.5, wy: s.exitGY + 0.5 },
@@ -465,14 +843,14 @@ export default function MazeFirstPerson() {
       else drawEventMarker(ctx, info.screenX, info.dist, H, sp.ev, s.t);
     }
 
-    // 4. Minimap + HUD
+    // 4. 小地圖 + HUD
     let nearDoor = null, nearDoorDist = INTERACT_DIST;
     s.doors.forEach(door => {
       const { wx, wy } = doorWorldPos(door);
       const d = Math.hypot(wx - s.px, wy - s.py);
       if (d < nearDoorDist) { nearDoor = door; nearDoorDist = d; }
     });
-    drawMinimap(ctx, s.walls, s.cols, s.rows, s.px, s.py, s.angle, s.rooms, s.eCell, s.xCell, eventsRef.current, s.doors);
+    drawMinimap(ctx, s.walls, s.cols, s.rows, s.px, s.py, s.angle, s.rooms, s.eCell, s.xCell, eventsRef.current, s.doors, torchBright, s.grid, lightCfg);
     drawHUD(ctx, W, H, nearDoor ? `[E]  ${nearDoor.closed ? "開門" : "關門"}` : null);
 
     s.animId = requestAnimationFrame(() => renderRef.current?.());
@@ -480,48 +858,96 @@ export default function MazeFirstPerson() {
 
   const initMaze = useCallback(() => {
     const s = g.current; s.cols = cols; s.rows = rows;
-    const eCell = { r: 0, c: 0 }, xCell = { r: rows - 1, c: cols - 1 };
     const safeMin = Math.min(minRoom, maxRoom), safeMax = Math.max(minRoom, maxRoom);
-    const { walls, rooms, doorPositions } = generateMaze(cols, rows, fixedRooms, randomCount, safeMin, safeMax);
-    const doors = doorPositions.map(dp => ({ ...dp, closed: dp.defaultOpen === false }));
-    s.walls = walls; s.rooms = rooms; s.doors = doors;
-    const { grid, zoneMap, doorMap } = buildGrid(walls, cols, rows, rooms, doors);
-    s.grid = grid; s.zoneMap = zoneMap; s.doorMap = doorMap;
-    s.eCell = eCell; s.xCell = xCell;
-    s.entryGX = 1; s.entryGY = 1;
-    s.exitGX = 2 * (cols - 1) + 1; s.exitGY = 2 * (rows - 1) + 1;
-    s.px = 1.5; s.py = 1.5; s.angle = Math.PI / 4;
-    s.won = false; s.t = 0; s.keys = {}; s.interactCooldown = 0;
-    setWon(false); setLog([]);
-    setEvents(resolveEvents(rooms, fixedRooms, globalEvCfg));
+    const factory = FACTORIES.find(f => f.id === factoryMode) || FACTORIES[2];
 
-    // collect maze data for display
-    setMazeData({
-      size: { cols, rows },
-      rooms: rooms.map(rm => ({
-        type: rm.fixed ? `固定房間 ${rm.origIdx + 1}` : '隨機房間',
-        r: rm.r, c: rm.c, w: rm.w, h: rm.h,
-        area: rm.w * rm.h,
-        events: rm.fixed
-          ? (fixedRooms[rm.origIdx]?.events || []).map(ev => ({ type: ev.type, pos: `△${ev.dr},△${ev.dc}`, text: ev.text }))
-          : [],
-      })),
-      doors: doors.map((d, i) => ({
-        id: i, side: d.side, r: d.r, c: d.c,
-        roomIdx: d.roomIdx,
-      })),
-      globalEvents: resolveEvents(rooms, fixedRooms, globalEvCfg)
-        .filter(ev => !ev.roomLabel)
-        .map(ev => ({ type: ev.type, r: ev.r, c: ev.c, text: ev.text })),
-      entry: { r: 0, c: 0 },
-      exit: { r: rows - 1, c: cols - 1 },
-    });
-  }, [cols, rows, fixedRooms, randomCount, minRoom, maxRoom, defaultDoorCount, defaultDoorOpen, globalEvCfg]);
+    s.won = false; s.t = 0; s.keys = {}; s.interactCooldown = 0;
+    s.transitionPrompt = null; s.wasOnPortal = false;
+    setTransitionPrompt(null);
+    setWon(false); setLog([]);
+
+    if (factory.multiMap) {
+      // ── 多地圖串聯模式：產生三張獨立迷宮 ──
+      s.multiMap = true;
+      s.maps = [0, 1, 2].map(() =>
+        buildSingleMap(cols, rows, [], factory.randomCount, safeMin, safeMax, defaultDoorCount, defaultDoorOpen)
+      );
+      // 交替式傳送門：A右下→B右下（B出口在左上）→C左上（C出口在右下）
+      const exitGX = 2 * (cols - 1) + 1, exitGY = 2 * (rows - 1) + 1;
+      // Map B：入口右下、出口左上（eCell/xCell 供小地圖使用）
+      s.maps[1].entryGX = exitGX;    s.maps[1].entryGY = exitGY;
+      s.maps[1].exitGX  = 1;         s.maps[1].exitGY  = 1;
+      s.maps[1].eCell   = { r: rows - 1, c: cols - 1 };
+      s.maps[1].xCell   = { r: 0, c: 0 };
+      // Map C：入口左上、出口右下（與 A 相同，預設值已正確）
+      s.maps[2].entryGX = 1;         s.maps[2].entryGY = 1;
+      s.maps[2].exitGX  = exitGX;    s.maps[2].exitGY  = exitGY;
+      s.currentMapIdx = 0;
+      syncCurrentMap(s);
+      const spawn0 = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
+      s.px = spawn0.px; s.py = spawn0.py; s.angle = Math.PI / 4;
+      setCurrentMapIdx(0);
+      setEvents([]);
+      setMazeData(null);
+    } else {
+      // ── 單地圖模式 ──
+      s.multiMap = false; s.maps = []; s.currentMapIdx = 0;
+      setCurrentMapIdx(0);
+
+      // 取得工廠設定的房間清單與隨機房間數
+      const activeFixedRooms = factory.id === FACTORY_IDS.CUSTOM
+        ? fixedRooms
+        : factory.getFixedRooms(cols, rows);
+      const activeRandomCount = factory.id === FACTORY_IDS.CUSTOM
+        ? randomCount
+        : factory.randomCount;
+
+      const { walls, rooms, doorPositions } = generateMaze(
+        cols, rows, activeFixedRooms, activeRandomCount, safeMin, safeMax, defaultDoorCount, defaultDoorOpen
+      );
+      const doors = doorPositions.map(dp => ({ ...dp, closed: dp.defaultOpen === false }));
+      s.walls = walls; s.rooms = rooms; s.doors = doors;
+      const { grid, zoneMap, doorMap } = buildGrid(walls, cols, rows, rooms, doors);
+      s.grid = grid; s.zoneMap = zoneMap; s.doorMap = doorMap;
+
+      // 由工廠決定出口格子座標
+      const xCell = factory.getExitCell(rooms, cols, rows);
+      s.eCell = { r: 0, c: 0 }; s.xCell = xCell;
+      s.entryGX = 1; s.entryGY = 1;
+      s.exitGX = 2 * xCell.c + 1; s.exitGY = 2 * xCell.r + 1;
+      s.px = 1.5; s.py = 1.5; s.angle = Math.PI / 4;
+
+      setEvents(resolveEvents(rooms, activeFixedRooms, globalEvCfg));
+
+      // 收集迷宮資料供顯示用
+      setMazeData({
+        size: { cols, rows },
+        rooms: rooms.map(rm => ({
+          type: rm.fixed ? `固定房間 ${rm.origIdx + 1}` : '隨機房間',
+          r: rm.r, c: rm.c, w: rm.w, h: rm.h,
+          area: rm.w * rm.h,
+          events: rm.fixed
+            ? (activeFixedRooms[rm.origIdx]?.events || []).map(ev => ({ type: ev.type, pos: `△${ev.dr},△${ev.dc}`, text: ev.text }))
+            : [],
+        })),
+        doors: doors.map((d, i) => ({ id: i, side: d.side, r: d.r, c: d.c, roomIdx: d.roomIdx })),
+        globalEvents: resolveEvents(rooms, activeFixedRooms, globalEvCfg)
+          .filter(ev => !ev.roomLabel)
+          .map(ev => ({ type: ev.type, r: ev.r, c: ev.c, text: ev.text })),
+        entry: { r: 0, c: 0 },
+        exit: { r: xCell.r, c: xCell.c },
+      });
+    }
+  }, [cols, rows, fixedRooms, randomCount, minRoom, maxRoom, defaultDoorCount, defaultDoorOpen, globalEvCfg, factoryMode]);
 
   useEffect(() => {
-    initMaze();
+    // 初始化世界地圖（只需一次）
+    if (!worldTerrainRef.current) {
+      regenerateWorld(WORLD_FACTORY_IDS.GRAND_WORLD, 1);
+    }
+
     const canvas = canvasRef.current; if (!canvas) return;
-    canvas.width = Math.min(520, cols * 22 + 4); canvas.height = Math.min(340, rows * 16 + 4);
+    canvas.width = 640; canvas.height = 440;
     cancelAnimationFrame(g.current.animId);
     g.current.animId = requestAnimationFrame(() => renderRef.current?.());
     const onKey = e => {
@@ -536,7 +962,65 @@ export default function MazeFirstPerson() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("keyup", onKey);
     };
-  }, [seed, initMaze]);
+  }, []);
+
+  // 世界地圖工廠：worldSeed 或 worldFactoryId 變化時重新產生地形
+  useEffect(() => {
+    if (!canvasRef.current) return; // 尚未掛載
+    regenerateWorld(worldFactoryId, worldSeed);
+  }, [worldFactoryId, worldSeed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 迷宮編輯器模式：seed 變化時重新初始化並切換至地城視角
+  useEffect(() => {
+    if (seed === 0) return; // 初次掛載不執行（保留大地圖模式）
+    initMaze();
+    g.current.gameMode = 'DUNGEON_INTERIOR';
+    g.current.lightCfg = { ambient: AMBIENT, torchRadius: TORCH_RADIUS };
+    setGameMode('DUNGEON_INTERIOR');
+  }, [seed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 確認傳送（支援多層高塔 / 多地圖）
+  const confirmTransition = useCallback(() => {
+    const s = g.current;
+    const dir = s.transitionPrompt;
+    if (!dir) return;
+    s.transitionPrompt = null;
+    setTransitionPrompt(null);
+    s.wasOnPortal = true;
+    if (dir === 'fwd') {
+      s.currentMapIdx++;
+      // 若已是最後一層 → 返回大地圖
+      if (s.currentMapIdx >= s.maps.length) {
+        doExitToOverworld();
+        return;
+      }
+      syncCurrentMap(s);
+      eventsRef.current = []; setEvents([]);
+      setCurrentMapIdx(s.currentMapIdx);
+      const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
+      s.px = sp.px; s.py = sp.py;
+    } else {
+      s.currentMapIdx--;
+      if (s.currentMapIdx < 0) {
+        // 回到地城入口 → 返回大地圖
+        doExitToOverworld();
+        return;
+      }
+      syncCurrentMap(s);
+      eventsRef.current = []; setEvents([]);
+      setCurrentMapIdx(s.currentMapIdx);
+      const sp = findSafeSpawn(s.grid, s.exitGX, s.exitGY);
+      s.px = sp.px; s.py = sp.py;
+    }
+  }, []);
+
+  // 取消傳送（玩家需離開傳送門才能再次詢問）
+  const cancelTransition = useCallback(() => {
+    const s = g.current;
+    s.transitionPrompt = null;
+    setTransitionPrompt(null);
+    // wasOnPortal 保持 true，確保玩家離開後才能再觸發
+  }, []);
 
   const press = (k, d) => { g.current.keys[k] = d; };
   const DBtn = ({ label, k, code }) => (
@@ -549,12 +1033,7 @@ export default function MazeFirstPerson() {
     </button>
   );
 
-  // const updateZone = (zoneIdx, newZone) =>
-  //   setTextures(prev => { const n=[...prev]; n[zoneIdx]=newZone; return n; });
-
-  // const typeColor={message:"var(--color-text-primary)",teleport:"var(--color-text-info)",door:"var(--color-text-warning)",win:"var(--color-text-success)"};
-
-  // ── Helpers for event editors ────────────────
+  // ── 事件編輯器輔助函式 ────────────────
   const setRmEvent = (rIdx, ei, patch) => setFixedRooms(p => p.map((x, j) => j === rIdx ? { ...x, events: (x.events || []).map((xe, k) => k === ei ? { ...xe, ...patch } : xe) } : x));
   const delRmEvent = (rIdx, ei) => setFixedRooms(p => p.map((x, j) => j === rIdx ? { ...x, events: (x.events || []).filter((_, k) => k !== ei) } : x));
   const addRmEvent = (rIdx) => setFixedRooms(p => p.map((x, j) => j === rIdx ? { ...x, events: [...(x.events || []), { id: `fr${rIdx}_${Date.now()}`, dr: 0, dc: 0, type: "message", text: "新事件", icon: "!", repeatable: false }] } : x));
@@ -568,17 +1047,280 @@ export default function MazeFirstPerson() {
   const typeColor = { message: "var(--color-text-primary)", teleport: "var(--color-text-info)", door: "var(--color-text-warning)", win: "var(--color-text-success)" };
   const safeMin = Math.min(minRoom, maxRoom), safeMax = Math.max(minRoom, maxRoom);
 
+  // ── UI 面板關閉回呼 ──
+  function closeDialogue()  { setActiveDialogue(null); g.current.uiPaused = false; g.current.interactCooldown = 60; }
+  function closeShop()      { setActiveShop(null);     g.current.uiPaused = false; g.current.interactCooldown = 60; }
+  function closeInventory() { setShowInventory(false); g.current.uiPaused = false; g.current.interactCooldown = 30; }
+
+  function closeCombat(result) {
+    setActiveCombat(null);
+    g.current.uiPaused = false;
+    g.current.interactCooldown = 80;
+    const p = playerRef.current;
+
+    if (result?.won) {
+      // 發放經驗值與掉落
+      result.loot?.forEach(l => addItem(p, l.itemId, l.qty));
+      if (result.exp) {
+        const { leveled, messages } = gainExp(p, result.exp);
+        if (leveled) { setLevelUpMsg(messages[0] || '升等！'); setTimeout(() => setLevelUpMsg(''), 3000); }
+      }
+      // 任務：kill 進度
+      const enemyId = activeCombat; // captured in closure
+      recordKill(p, enemyId);
+      QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'kill', { enemyId }));
+    }
+    if (!result?.won && !result?.fled) {
+      // 被打倒：傳回起點
+      const s = g.current;
+      p.hp = Math.max(1, Math.floor(p.maxHp * 0.3)); // 殘血復活
+      const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
+      s.px = sp.px; s.py = sp.py;
+    }
+    setPlayerStats({ ...p });
+    setQuestLog(p.quests.map(q => ({ ...q })));
+  }
+
   return (
     <div style={{ padding: "1rem 0", fontFamily: "var(--font-sans)" }}>
 
-      {/* ── Canvas ── */}
-      <div style={{ overflowX: "auto", marginBottom: 10 }}>
+      {/* ── 迷宮工廠選擇器（地城模式才顯示）── */}
+      {gameMode === 'DUNGEON_INTERIOR' && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+          {FACTORIES.map(f => (
+            <button
+              key={f.id}
+              onClick={() => { setFactoryMode(f.id); setSeed(s => s + 1); }}
+              title={f.description}
+              style={{
+                fontSize: 12, padding: "5px 12px",
+                borderRadius: "var(--border-radius-md)",
+                background: factoryMode === f.id ? "var(--color-background-info)" : "var(--color-background-secondary)",
+                color: factoryMode === f.id ? "var(--color-text-info)" : "var(--color-text-secondary)",
+                border: factoryMode === f.id ? "0.5px solid var(--color-border-info)" : "0.5px solid var(--color-border-tertiary)",
+                fontWeight: factoryMode === f.id ? 600 : 400,
+              }}>
+              {f.label}
+            </button>
+          ))}
+          <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", alignSelf: "center", marginLeft: 4 }}>
+            {FACTORIES.find(f => f.id === factoryMode)?.description}
+          </span>
+        </div>
+      )}
+
+      {/* ── 大地圖工廠選擇器 ── */}
+      {gameMode === 'OVERWORLD' && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+          {WORLD_FACTORIES.map(f => (
+            <button
+              key={f.id}
+              onClick={() => setWorldFactoryId(f.id)}
+              title={f.description}
+              style={{
+                fontSize: 12, padding: "5px 12px",
+                borderRadius: "var(--border-radius-md)",
+                background: worldFactoryId === f.id ? "var(--color-background-success)" : "var(--color-background-secondary)",
+                color: worldFactoryId === f.id ? "var(--color-text-success)" : "var(--color-text-secondary)",
+                border: worldFactoryId === f.id ? "0.5px solid var(--color-border-success)" : "0.5px solid var(--color-border-tertiary)",
+                fontWeight: worldFactoryId === f.id ? 600 : 400,
+              }}>
+              {f.label}
+            </button>
+          ))}
+          <button
+            onClick={() => setWorldSeed(s => s + 1)}
+            style={{ fontSize: 12, padding: "5px 12px", marginLeft: 4 }}>
+            🎲 重新產生地圖
+          </button>
+          <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", alignSelf: "center" }}>
+            {WORLD_FACTORIES.find(f => f.id === worldFactoryId)?.description}
+            {' '}#{worldSeed}
+          </span>
+        </div>
+      )}
+
+      {/* ── 地城模式按鈕 ── */}
+      {gameMode === 'DUNGEON_INTERIOR' && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+          <button onClick={doExitToOverworld} style={{ fontSize: 12, padding: "4px 12px" }}>← 返回大地圖</button>
+          <span style={{ fontSize: 12, color: "var(--color-text-tertiary)" }}>
+            📍 {worldLocationsRef.current.find(l => l.id === g.current.activeLocationId)?.label || '地城'}
+          </span>
+          {/* 玩家狀態列 */}
+          <div style={{ marginLeft: "auto", display: "flex", gap: 12, fontSize: 12 }}>
+            <span style={{ color: "#ff8888" }}>❤ {playerStats.hp}/{playerStats.maxHp}</span>
+            <span style={{ color: "#88aaff" }}>💧 {playerStats.mp}/{playerStats.maxMp}</span>
+            <span style={{ color: "#ffd060" }}>💰 {playerStats.gold}</span>
+            <span style={{ color: "#aaffaa" }}>Lv.{playerStats.lv}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── 城鎮選單模式按鈕 ── */}
+      {gameMode === 'TOWN_MENU' && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+          <button onClick={doExitToOverworld} style={{ fontSize: 12, padding: "4px 12px" }}>← 返回大地圖</button>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 12, fontSize: 12 }}>
+            <span style={{ color: "#ff8888" }}>❤ {playerStats.hp}/{playerStats.maxHp}</span>
+            <span style={{ color: "#88aaff" }}>💧 {playerStats.mp}/{playerStats.maxMp}</span>
+            <span style={{ color: "#ffd060" }}>💰 {playerStats.gold}</span>
+            <span style={{ color: "#aaffaa" }}>Lv.{playerStats.lv}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── 城鎮選單 ── */}
+      {gameMode === 'TOWN_MENU' && activeTownLoc && (
+        <div style={{ marginBottom: 10, position: "relative", display: "inline-block" }}>
+          <TownPanel
+            loc={activeTownLoc}
+            events={events}
+            onEvent={triggerEvent}
+            onExit={doExitToOverworld}
+          />
+          {/* 覆蓋面板（對話/商店/戰鬥/港口）掛在同一容器 */}
+          {activeDialogue && (
+            <DialoguePanel lines={DIALOGUES[activeDialogue] || []} onClose={closeDialogue} />
+          )}
+          {activeShop && (
+            <ShopPanel
+              shopDef={SHOPS[activeShop]}
+              player={playerRef.current}
+              onClose={closeShop}
+              onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
+            />
+          )}
+          {activeCombat && (
+            <CombatPanel enemyId={activeCombat} player={playerRef.current} onCombatEnd={closeCombat} />
+          )}
+          {activePort && (
+            <PortPanel
+              port={activePort}
+              locations={worldLocationsRef.current}
+              onTravel={doTravelToPort}
+              onClose={closePort}
+            />
+          )}
+        </div>
+      )}
+
+      {/* ── 畫布 ── */}
+      <div style={{ overflowX: "auto", marginBottom: 10, position: "relative", display: gameMode === 'TOWN_MENU' ? "none" : "inline-block" }}>
         <canvas ref={canvasRef} style={{ display: "block", borderRadius: "var(--border-radius-md)", background: "#0d0d1a" }} />
+
+        {/* ── 港口旅行面板 ── */}
+        {gameMode !== 'TOWN_MENU' && activePort && (
+          <PortPanel
+            port={activePort}
+            locations={worldLocationsRef.current}
+            onTravel={doTravelToPort}
+            onClose={closePort}
+          />
+        )}
+
+        {/* ── RPG 覆蓋面板（地城模式）── */}
+        {gameMode !== 'TOWN_MENU' && activeDialogue && (
+          <DialoguePanel
+            lines={DIALOGUES[activeDialogue] || []}
+            onClose={closeDialogue}
+          />
+        )}
+        {gameMode !== 'TOWN_MENU' && activeShop && (
+          <ShopPanel
+            shopDef={SHOPS[activeShop]}
+            player={playerRef.current}
+            onClose={closeShop}
+            onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
+          />
+        )}
+        {gameMode !== 'TOWN_MENU' && activeCombat && (
+          <CombatPanel
+            enemyId={activeCombat}
+            player={playerRef.current}
+            onCombatEnd={closeCombat}
+          />
+        )}
+        {showInventory && (
+          <InventoryPanel
+            player={playerRef.current}
+            onClose={closeInventory}
+            onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
+          />
+        )}
+
+        {/* 升等提示 */}
+        {levelUpMsg && (
+          <div style={{
+            position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)",
+            background: "rgba(255,220,40,0.95)", color: "#3a2000", fontWeight: 700,
+            fontSize: 14, padding: "8px 20px", borderRadius: 8, whiteSpace: "nowrap",
+            boxShadow: "0 0 16px rgba(255,200,0,0.6)",
+          }}>{levelUpMsg}</div>
+        )}
+
+        {/* ── 地圖切換詢問框 ── */}
+        {transitionPrompt && (
+          <div style={{
+            position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)",
+            background: "rgba(10,10,20,0.92)", border: "0.5px solid var(--color-border-info)",
+            borderRadius: "var(--border-radius-md)", padding: "10px 18px",
+            display: "flex", alignItems: "center", gap: 12, whiteSpace: "nowrap",
+          }}>
+            <span style={{ fontSize: 13, color: "var(--color-text-primary)" }}>
+              {transitionPrompt === 'fwd'
+                ? (g.current.gameMode === 'DUNGEON_INTERIOR'
+                    ? `前往第 ${g.current.currentMapIdx + 2} 層？`
+                    : `前往地圖 ${["B", "C"][g.current.currentMapIdx]}？`)
+                : (g.current.gameMode === 'DUNGEON_INTERIOR'
+                    ? (g.current.currentMapIdx <= 1 ? `返回地面？` : `返回第 ${g.current.currentMapIdx} 層？`)
+                    : `返回地圖 ${["A", "B"][g.current.currentMapIdx - 1]}？`)}
+            </span>
+            <button onClick={confirmTransition} style={{
+              fontSize: 12, padding: "4px 14px", borderRadius: "var(--border-radius-md)",
+              background: "var(--color-background-info)", color: "var(--color-text-info)",
+              border: "0.5px solid var(--color-border-info)", cursor: "pointer", fontWeight: 600,
+            }}>確認</button>
+            <button onClick={cancelTransition} style={{
+              fontSize: 12, padding: "4px 10px", borderRadius: "var(--border-radius-md)",
+              background: "none", color: "var(--color-text-tertiary)",
+              border: "0.5px solid var(--color-border-tertiary)", cursor: "pointer",
+            }}>取消</button>
+          </div>
+        )}
       </div>
+
+      {/* ── 多地圖進度指示器 ── */}
+      {factoryMode === FACTORY_IDS.MULTI_MAP && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
+          {["A", "B", "C"].map((label, i) => (
+            <div key={label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: "50%",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 13, fontWeight: 600,
+                background: currentMapIdx === i
+                  ? "var(--color-background-info)"
+                  : currentMapIdx > i ? "var(--color-background-success)" : "var(--color-background-secondary)",
+                color: currentMapIdx === i
+                  ? "var(--color-text-info)"
+                  : currentMapIdx > i ? "var(--color-text-success)" : "var(--color-text-tertiary)",
+                border: `0.5px solid ${currentMapIdx === i ? "var(--color-border-info)" : currentMapIdx > i ? "var(--color-border-success)" : "var(--color-border-tertiary)"}`,
+              }}>
+                {label}
+              </div>
+              {i < 2 && <span style={{ color: "var(--color-text-tertiary)", fontSize: 12 }}>→</span>}
+            </div>
+          ))}
+          <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginLeft: 6 }}>
+            {won ? "通關！" : `目前在地圖 ${["A","B","C"][currentMapIdx]}`}
+          </span>
+        </div>
+      )}
 
       {won && <div style={{ background: "var(--color-background-success)", color: "var(--color-text-success)", borderRadius: "var(--border-radius-md)", padding: "10px 16px", marginBottom: 10, fontSize: 14, fontWeight: 500 }}>通過出口！</div>}
 
-      {/* ── Controls ── */}
+      {/* ── 操作按鈕 ── */}
       <div style={{ display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,48px)", gridTemplateRows: "repeat(3,48px)", gap: 4 }}>
           <div /><DBtn label="▲" k="ArrowUp" /><div />
@@ -592,7 +1334,10 @@ export default function MazeFirstPerson() {
         <button onClick={() => setSeed(s => s + 1)} style={{ marginLeft: "auto", alignSelf: "center" }}>重新開始</button>
       </div>
 
-      {/* ── Map + Room size settings ── */}
+      {/* ── 地城編輯器面板（大地圖模式下隱藏）── */}
+      {gameMode === 'DUNGEON_INTERIOR' && (<>
+
+      {/* ── 地圖與房間大小設定 ── */}
       <div style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-lg)", padding: "10px 14px", marginBottom: 14 }}>
         <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.06em" }}>地圖與房間設定</p>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 20px", marginBottom: 8 }}>
@@ -625,7 +1370,7 @@ export default function MazeFirstPerson() {
         </div>
       </div>
 
-      {/* ── Texture panel ── */}
+      {/* ── 貼圖面板 ── */}
       <div style={{ marginBottom: 14 }}>
         <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>
           貼圖設定（點擊 + 上傳，即時生效）
@@ -655,11 +1400,11 @@ export default function MazeFirstPerson() {
         </p>
       </div>
 
-      {/* ── Fixed rooms + events + global events + log ── */}
+      {/* ── 固定房間 + 事件 + 全域事件 + 記錄 ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
 
-        {/* Fixed room editor */}
-        <div>
+        {/* 固定房間編輯器（僅完全自訂模式顯示） */}
+        <div style={{ display: factoryMode === FACTORY_IDS.CUSTOM ? undefined : "none" }}>
           <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>固定房間</p>
           <div style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-md)", padding: "8px 10px", maxHeight: 280, overflowY: "auto" }}>
             {fixedRooms.map((rm, rIdx) => (
@@ -720,9 +1465,9 @@ export default function MazeFirstPerson() {
           </div>
         </div>
 
-        {/* Global events + log */}
+        {/* 全域事件 + 記錄 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div>
+          <div style={{ display: factoryMode === FACTORY_IDS.CUSTOM ? undefined : "none" }}>
             <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>全域事件</p>
             <div style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-md)", padding: "6px 8px", maxHeight: 140, overflowY: "auto" }}>
               {globalEvCfg.map((ev, i) => (
@@ -759,8 +1504,37 @@ export default function MazeFirstPerson() {
 
       </div>
 
-      {/* ── Maze data display ── */}
+      {/* ── 任務記錄（地城模式才顯示）── */}
+      {gameMode === 'DUNGEON_INTERIOR' && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>任務記錄</p>
+          <div style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-md)", padding: "8px 12px", minHeight: 40 }}>
+            {questLog.length === 0 && <p style={{ fontSize: 12, color: "var(--color-text-tertiary)", margin: 0 }}>尚未接受任何任務</p>}
+            {questLog.map(q => {
+              const def = QUEST_DEFS.find(d => d.id === q.questId);
+              if (!def) return null;
+              const step = def.steps[q.stepIdx];
+              return (
+                <div key={q.questId} style={{ fontSize: 12, padding: "4px 0", borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
+                  <span style={{ fontWeight: 500, color: q.completed ? "var(--color-text-success)" : "var(--color-text-primary)" }}>
+                    {q.completed ? "✓ " : "◎ "}{def.title}
+                  </span>
+                  {!q.completed && step && (
+                    <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginLeft: 8 }}>
+                      → {step.desc}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── 迷宮資料顯示（舊工具模式）── */}
       {mazeData && <MazeDataPanel data={mazeData} walls={g.current.walls} />}
+
+      </>)}
 
     </div>
   );

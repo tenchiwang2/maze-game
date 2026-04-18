@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────
 //  mazeGenerator.js
 //
-//  Pure data functions — no React, no canvas, no DOM.
-//  Structured for easy factory-pattern replacement:
+//  純粹的資料函式 — 不含 React、canvas 或 DOM
+//  設計為可輕鬆替換的工廠模式：
 //
 //  generateMaze()   → { walls, rooms, doorPositions }
 //  buildGrid()      → { grid, zoneMap, doorMap }
@@ -72,7 +72,7 @@ export function generateMaze(cols, rows, fixedRooms = [], randomCount = 3, minRo
         });
       }
     doors.sort(()=>Math.random()-0.5);
-    // per-room overrides, or fall back to global defaults
+    // 每個房間的覆寫設定，或沿用全域預設值
     const count    = rm.fixed && rm.doorCount   != null ? rm.doorCount   : defaultDoorCount;
     const defOpen  = rm.fixed && rm.defaultOpen != null ? rm.defaultOpen : defaultDoorOpen;
     for (let i=0;i<Math.min(count,doors.length);i++) {
@@ -87,12 +87,12 @@ export function generateMaze(cols, rows, fixedRooms = [], randomCount = 3, minRo
 }
 
 // ─────────────────────────────────────────────
-//  Grid builder  +  zoneMap
+//  格子建立器  +  zoneMap
 // ─────────────────────────────────────────────
-// zoneMap[gy][gx] = zone id:
-//   0 = corridor (default textures)
-//   N (1-based) = fixed room origIdx+1
-//  -1 = wall (irrelevant, but set anyway)
+// zoneMap[gy][gx] = 區域 id：
+//   0 = 走廊（預設貼圖）
+//   N（1-based）= 固定房間 origIdx+1
+//  -1 = 牆壁（無關緊要，但仍會設定）
 export function buildGrid(walls, cols, rows, rooms = [], doors = []) {
   const W=2*cols+1, H=2*rows+1;
   const grid    = Array.from({length:H},()=>Array(W).fill(1));
@@ -107,7 +107,7 @@ export function buildGrid(walls, cols, rows, rooms = [], doors = []) {
       if (!walls[r][c].right &&c<cols-1) grid[gr][gc+1]=0;
     }
 
-  // flood-clear rooms + mark zone
+  // 清除房間格子並標記區域
   for (const rm of rooms) {
     const zoneId = rm.fixed ? rm.origIdx+1 : 0;
     for (let gy=2*rm.r+1; gy<=2*(rm.r+rm.h)-1; gy++)
@@ -133,7 +133,7 @@ export function buildGrid(walls, cols, rows, rooms = [], doors = []) {
 }
 
 // ─────────────────────────────────────────────
-//  Raycaster  – now returns wallX + zoneId too
+//  光線投射器  – 現在也回傳 wallX 與 zoneId
 // ─────────────────────────────────────────────
 function castRays(grid, zoneMap, doorMap, px, py, angle, gW, gH) {
   const rays = [];
@@ -161,7 +161,7 @@ function castRays(grid, zoneMap, doorMap, px, py, angle, gW, gH) {
     }
     const perpDist = dist * Math.cos(ra-angle);
 
-    // wallX: fractional hit position along the wall face (0-1)
+    // wallX：光線命中牆面的小數位置（0-1）
     let wallX;
     if (side===0) {
       wallX = py + perpDist*sin;
@@ -169,10 +169,10 @@ function castRays(grid, zoneMap, doorMap, px, py, angle, gW, gH) {
       wallX = px + perpDist*cos;
     }
     wallX -= Math.floor(wallX);
-    // flip so textures aren't mirrored
+    // 翻轉以避免貼圖鏡像
     if ((side===0&&cos>0)||(side===1&&sin<0)) wallX = 1-wallX;
 
-    // zoneId: look at the cell just before the wall in ray direction
+    // zoneId：取光線方向中牆壁前一格的區域
     const prevMx = side===0 ? hitMx-sX : hitMx;
     const prevMy = side===0 ? hitMy    : hitMy-sY;
     let zoneId = 0;
@@ -185,7 +185,7 @@ function castRays(grid, zoneMap, doorMap, px, py, angle, gW, gH) {
 }
 
 // ─────────────────────────────────────────────
-//  Floor/ceiling caster  (ImageData-based)
+//  地板/天花板渲染器（基於 ImageData）
 // ─────────────────────────────────────────────
 function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, textures) {
   const imgData = ctx.createImageData(W, H);
@@ -209,11 +209,11 @@ function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, textures)
     let floorY    = py + rowDist * rayDirY0;
 
     for (let x = 0; x < W; x++) {
-      // world cell
+      // 世界格子座標
       const cellX = Math.floor(floorX);
       const cellY = Math.floor(floorY);
 
-      // lookup zone at this world coord
+      // 查詢此世界座標的區域
       let zoneId = 0;
       if (cellX>=0&&cellX<gW&&cellY>=0&&cellY<gH)
         zoneId = zoneMap[cellY][cellX];
@@ -227,19 +227,19 @@ function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, textures)
         const ty = Math.floor((floorY-cellY)*tex.h) & (tex.h-1);
         const ti = (ty*tex.w+tx)*4;
         r=tex.data[ti]; g=tex.data[ti+1]; b=tex.data[ti+2];
-        // distance darkening
+        // 距離昏暗效果
         const shade = Math.max(0, 1-rowDist/18);
         r=(r*shade)|0; g=(g*shade)|0; b=(b*shade)|0;
       } else {
-        // per-zone fallback solid colour
+        // 每區域備用純色
         const shade = Math.max(0, 1-rowDist/18);
-        // zone 0 = corridor; zones 1+ = fixed rooms (each gets a distinct warm tint)
+        // 區域 0 = 走廊；區域 1+ = 固定房間（各有獨特暖色調）
         const roomTints = [
-          null,                    // 0 corridor: use default below
-          [40,30,20],              // room 1: warm sandstone
-          [18,28,38],              // room 2: cool slate
-          [35,20,35],              // room 3: purple stone
-          [20,35,20],              // room 4: mossy
+          null,                    // 0 走廊：使用以下預設色
+          [40,30,20],              // 房間 1：溫暖砂岩色
+          [18,28,38],              // 房間 2：冷色板岩
+          [35,20,35],              // 房間 3：紫色石材
+          [20,35,20],              // 房間 4：苔蘚色
         ];
         const tint = roomTints[zoneId] || null;
         if (isFloor) {
@@ -262,7 +262,7 @@ function renderFloorCeiling(ctx, W, H, px, py, angle, zoneMap, gW, gH, textures)
 }
 
 // ─────────────────────────────────────────────
-//  Wall column renderer  (texture slice or flat)
+//  牆壁欄位渲染器（貼圖切片或平面填色）
 // ─────────────────────────────────────────────
 function renderWalls(ctx, W, H, rays, textures, doors) {
   const sw = W / NUM_RAYS;
@@ -273,7 +273,7 @@ function renderWalls(ctx, W, H, rays, textures, doors) {
     const dim = side===1 ? 0.6 : 1.0;
 
     if (doorRoomIdx >= 0) {
-      // door: use the room's door texture, or fallback to warm brown flat colour
+      // 門：使用房間的門貼圖，或備用暖棕色平面填色
       const door = doors && doors[doorRoomIdx];
       const doorZoneId = door ? door.roomIdx + 1 : 0;
       const tz  = textures[doorZoneId] || textures[0];
@@ -296,13 +296,13 @@ function renderWalls(ctx, W, H, rays, textures, doors) {
 
     if (tex && tex.loaded) {
       const tx = Math.floor(wallX * tex.w) & (tex.w-1);
-      // draw one vertical strip from the texture
+      // 從貼圖繪製一條垂直條紋
       ctx.drawImage(
         tex.canvas,
         tx, 0, 1, tex.h,
         Math.floor(i*sw), top, Math.ceil(sw)+1, wh
       );
-      // distance + side darkening overlay
+      // 距離與側面昏暗疊加
       if (dim < 1 || dist > 2) {
         const alpha = Math.min(0.75, (1-dim)*0.4 + dist*0.035);
         ctx.fillStyle = `rgba(0,0,0,${alpha})`;
@@ -317,7 +317,7 @@ function renderWalls(ctx, W, H, rays, textures, doors) {
 }
 
 // ─────────────────────────────────────────────
-//  Sprite z-buffer  (unchanged)
+//  精靈 z-buffer（未修改）
 // ─────────────────────────────────────────────
 function getSpriteInfo(wx, wy, px, py, angle, W, rays) {
   const dx=wx-px, dy=wy-py;
@@ -336,7 +336,7 @@ function getSpriteInfo(wx, wy, px, py, angle, W, rays) {
 }
 
 // ─────────────────────────────────────────────
-//  Portal / event draw helpers  (unchanged)
+//  傳送門 / 事件繪製輔助函式（未修改）
 // ─────────────────────────────────────────────
 function drawEntryArch(ctx,sx,dist,H){
   const h=Math.min(H*2.2,H/dist),top=(H-h)/2,w=h*0.55,a=Math.min(1,Math.max(0,1-dist/18));
@@ -371,7 +371,7 @@ function drawEventMarker(ctx,sx,dist,H,ev,t){
 }
 
 // ─────────────────────────────────────────────
-//  Minimap  (unchanged)
+//  小地圖（未修改）
 // ─────────────────────────────────────────────
 const MM=5;
 function drawMinimap(ctx,walls,cols,rows,px,py,angle,rooms,eCell,xCell,events,doors){
@@ -413,83 +413,7 @@ function drawHUD(ctx,W,H,prompt){
 }
 
 // ─────────────────────────────────────────────
-//  Texture helpers
-// ─────────────────────────────────────────────
-// Load an image file into a TexInfo object for floor casting (ImageData)
-// and a separate offscreen canvas for wall slicing (drawImage)
-function loadTexture(file) {
-  return new Promise(resolve => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      const img = new Image();
-      img.onload = () => {
-        const w = img.naturalWidth  || TEX_W;
-        const h = img.naturalHeight || TEX_H;
-        // offscreen canvas for drawImage wall slicing
-        const oc = document.createElement('canvas');
-        oc.width=w; oc.height=h;
-        const octx = oc.getContext('2d');
-        octx.drawImage(img,0,0);
-        // pixel array for floor casting
-        const id   = octx.getImageData(0,0,w,h);
-        resolve({ loaded:true, canvas:oc, data:id.data, w, h, src:e.target.result });
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-// ─────────────────────────────────────────────
-//  Texture Upload widget  (single face)
-// ─────────────────────────────────────────────
-function TexUpload({ label, texInfo, onLoad }) {
-  return (
-    <label style={{
-      display:"flex", flexDirection:"column", alignItems:"center", gap:4,
-      cursor:"pointer", width:64,
-    }}>
-      <div style={{
-        width:60, height:60, border:"0.5px solid var(--color-border-secondary)",
-        borderRadius:"var(--border-radius-md)", overflow:"hidden",
-        background:"var(--color-background-secondary)",
-        display:"flex", alignItems:"center", justifyContent:"center",
-      }}>
-        {texInfo?.src
-          ? <img src={texInfo.src} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-          : <span style={{fontSize:20,color:"var(--color-text-tertiary)"}}>+</span>
-        }
-      </div>
-      <span style={{fontSize:11,color:"var(--color-text-tertiary)"}}>{label}</span>
-      <input type="file" accept="image/*" style={{display:"none"}}
-        onChange={e => e.target.files[0] && loadTexture(e.target.files[0]).then(onLoad)} />
-    </label>
-  );
-}
-
-// ─────────────────────────────────────────────
-//  Texture zone row  (wall + ceil + floor)
-// ─────────────────────────────────────────────
-function ZoneTexRow({ label, zone, onChange, accent, showDoor }) {
-  return (
-    <div style={{
-      display:"flex", alignItems:"center", gap:8, padding:"8px 0",
-      borderBottom:"0.5px solid var(--color-border-tertiary)",
-    }}>
-      <div style={{width:4,height:36,borderRadius:2,background:accent||"#888",flexShrink:0}}/>
-      <span style={{fontSize:12,color:"var(--color-text-secondary)",minWidth:68,lineHeight:1.3}}>{label}</span>
-      <TexUpload label="牆壁"   texInfo={zone?.wall}  onLoad={t => onChange({...zone, wall:t})} />
-      <TexUpload label="天花板" texInfo={zone?.ceil}  onLoad={t => onChange({...zone, ceil:t})} />
-      <TexUpload label="地板"   texInfo={zone?.floor} onLoad={t => onChange({...zone, floor:t})} />
-      {showDoor && (
-        <TexUpload label="房間門" texInfo={zone?.door} onLoad={t => onChange({...zone, door:t})} />
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────
-//  resolve events helper
+//  解析事件輔助函式
 // ─────────────────────────────────────────────
 export function resolveEvents(rooms, fixedRms, globalEvCfg) {
   const out=[];
@@ -511,10 +435,10 @@ export function resolveEvents(rooms, fixedRms, globalEvCfg) {
 
 
 // ─────────────────────────────────────────────
-//  Door world-space position helper
+//  門的世界座標位置輔助函式
 // ─────────────────────────────────────────────
 /**
- * Return the world-space centre of a door for proximity / interaction checks.
+ * 回傳門的世界座標中心點，供鄰近偵測 / 互動判定使用。
  * @param {{ side: string, r: number, c: number }} door
  * @returns {{ wx: number, wy: number }}
  */

@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────
 //  defaults.js
 //
-//  Default level data and UI option constants.
-//  Swap these out to create a different level.
+//  預設關卡資料與 UI 選項常數
+//  替換此檔案即可建立不同的關卡
 // ─────────────────────────────────────────────
 
 export const DEFAULT_FIXED = [
@@ -22,8 +22,8 @@ export const DEFAULT_GLOBAL = [
   { id:"g0", r:8, c:4, type:"teleport", text:"走廊傳送陣", icon:"*", repeatable:true, triggered:false, destR:2, destC:12 },
   { id:"g1", r:14, c:2, type:"message", text:"古老石碑", icon:"!", repeatable:false, triggered:false },
 ];
-export const EVENT_TYPES = ["message","teleport","door","win"];
-export const EVENT_ICONS = { message:"!", teleport:"*", door:"D", win:"★" };
+export const EVENT_TYPES = ["message","teleport","door","win","npc","shop","combat","chest","town_gate"];
+export const EVENT_ICONS = { message:"!", teleport:"*", door:"D", win:"★", npc:"@", shop:"$", combat:"!", chest:"T", town_gate:"G" };
 
 // ─────────────────────────────────────────────
-//  Main component
+//  主元件
