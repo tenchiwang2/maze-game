@@ -17,7 +17,8 @@ import { WORLD_FACTORIES, WORLD_FACTORY_IDS } from './worldFactory.jsx';
 import { drawOverworld } from './OverworldRenderer.jsx';
 import { NPC_DEFS } from './world/npcs.js';
 import { initNPCs, updateNPCs, getNearbyNPC, getHostileNPCsNear } from './npcSystem.js';
-import { createPlayer, addItem, checkQuestStep, hasItem } from './playerState.jsx';
+import { createPlayer, addItem, addQuest, claimReward, checkQuestStep, gainExp, hasItem } from './playerState.jsx';
+import QuestOfferPanel from './QuestOfferPanel.jsx';
 import { applyCombatResult } from './combatService.js';
 import { rollLoot } from './combatEngine.jsx';
 import { ITEMS } from './itemData.jsx';
@@ -529,6 +530,8 @@ export default function MazeFirstPerson() {
   const [nearbyNPC,  setNearbyNPC]            = useState(null); // 靠近的世界 NPC
   const [playerStats, setPlayerStats]         = useState(() => createPlayer()); // for re-render trigger
   const [questLog, setQuestLog]               = useState([]);
+  const [activeQuestOffer, setActiveQuestOffer] = useState(null);
+  // shape: { questId, mode:'offer'|'reward', playerQuest?, continueDialogue } | null
   const [levelUpMsg, setLevelUpMsg]           = useState('');
   const [gameTime, setGameTime]               = useState(TIME_START); // 遊戲時間（分鐘）
 
@@ -1019,10 +1022,15 @@ export default function MazeFirstPerson() {
               emit('combat:start', { enemyId: nearNPC.enemyId });
               addToast({ type: 'combat', icon: '⚔️', title: `挑戰 ${nearNPC.name}！`, duration: 1800 });
             } else if (nearNPC.dialogueId) {
-              // 友善/中立 NPC → 對話
               s.uiPaused = true;
-              setActiveDialogue(nearNPC.dialogueId);
-              addToast({ type: 'npc', icon: nearNPC.icon, title: nearNPC.name, duration: 1500 });
+              // 優先檢查：是否有完成但未領獎的任務可交差
+              if (tryClaimQuest(nearNPC.dialogueId)) {
+                addToast({ type: 'quest', icon: '📬', title: `任務交差：${nearNPC.name}`, duration: 1500 });
+              } else {
+                // 一般對話
+                setActiveDialogue(nearNPC.dialogueId);
+                addToast({ type: 'npc', icon: nearNPC.icon, title: nearNPC.name, duration: 1500 });
+              }
             }
           }
         }
@@ -1452,6 +1460,75 @@ export default function MazeFirstPerson() {
     g.current.interactCooldown = 30;
   }
 
+  // ── 任務系統回呼 ──────────────────────────────────────────────────────────
+
+  // DialoguePanel → questOffer 選項被點擊時呼叫
+  // continueDialogue：accept 或 decline 後繼續/關閉對話的函式
+  function handleQuestOffer(questId, continueDialogue) {
+    setActiveQuestOffer({ questId, mode: 'offer', continueDialogue });
+  }
+
+  // QuestOfferPanel「接受任務」
+  function handleQuestAccept() {
+    if (!activeQuestOffer) return;
+    const { questId, mode, continueDialogue } = activeQuestOffer;
+    setActiveQuestOffer(null);
+
+    if (mode === 'offer') {
+      const def = QUEST_DEFS.find(q => q.id === questId);
+      if (def) {
+        addQuest(playerRef.current, def);
+        setQuestLog(playerRef.current.quests.map(q => ({ ...q })));
+        addToast({ type: 'quest', icon: '📜', title: `接受任務：${def.title}`, duration: 2500 });
+      }
+      continueDialogue?.();           // 繼續 / 關閉對話
+    } else {
+      // reward 模式：領獎邏輯已封裝在 continueDialogue 裡
+      continueDialogue?.();
+    }
+  }
+
+  // QuestOfferPanel「拒絕」（只有 offer 模式有）
+  function handleQuestDecline() {
+    if (!activeQuestOffer) return;
+    const { continueDialogue } = activeQuestOffer;
+    setActiveQuestOffer(null);
+    continueDialogue?.();
+  }
+
+  // 向 NPC 交差（回到 giverNpc 時自動偵測）
+  function tryClaimQuest(dialogueId) {
+    const p = playerRef.current;
+    const claimable = QUEST_DEFS.find(qd =>
+      qd.giverNpcId === dialogueId &&
+      p.quests.some(q => q.questId === qd.id && q.completed && !q.claimed)
+    );
+    if (!claimable) return false;
+
+    // 顯示領獎彈窗
+    const playerQuest = p.quests.find(q => q.questId === claimable.id);
+    setActiveQuestOffer({
+      questId: claimable.id,
+      mode: 'reward',
+      playerQuest,
+      continueDialogue: () => {
+        // 領取獎勵
+        const r = claimReward(p, claimable);
+        if (r?.exp) {
+          const { leveled, messages } = gainExp(p, r.exp);
+          if (leveled) addToast({ type: 'levelup', icon: '⬆', title: messages[0] ?? '升等！', duration: 3000 });
+        }
+        setPlayerStats({ ...p });
+        setQuestLog(p.quests.map(q => ({ ...q })));
+        setActiveQuestOffer(null);
+        g.current.uiPaused = false;
+        g.current.interactCooldown = 60;
+        addToast({ type: 'quest', icon: '🎉', title: `任務完成：${claimable.title}！`, duration: 3000 });
+      },
+    });
+    return true;
+  }
+
   // ── UI 面板關閉回呼 ──
   function closeDialogue()  { setActiveDialogue(null); g.current.uiPaused = false; g.current.interactCooldown = 60; advanceGameTime(TIME_DIALOGUE); }
   function closeShop()      { setActiveShop(null);     g.current.uiPaused = false; g.current.interactCooldown = 60; advanceGameTime(TIME_SHOP); }
@@ -1617,7 +1694,11 @@ export default function MazeFirstPerson() {
           />
           {/* 覆蓋面板（對話/商店/戰鬥/港口）掛在同一容器 */}
           {activeDialogue && (
-            <DialoguePanel lines={DIALOGUES[activeDialogue] || []} onClose={closeDialogue} />
+            <DialoguePanel
+              lines={DIALOGUES[activeDialogue] || []}
+              onClose={closeDialogue}
+              onQuestOffer={handleQuestOffer}
+            />
           )}
           {activeShop && (
             <ShopPanel
@@ -1751,6 +1832,7 @@ export default function MazeFirstPerson() {
           <DialoguePanel
             lines={DIALOGUES[activeDialogue] || []}
             onClose={closeDialogue}
+            onQuestOffer={handleQuestOffer}
           />
         )}
         {gameMode !== 'TOWN_MENU' && activeShop && (
@@ -2059,18 +2141,31 @@ export default function MazeFirstPerson() {
           <p style={{ fontSize: 11, fontWeight: 500, color: "var(--color-text-tertiary)", margin: "0 0 6px", textTransform: "uppercase", letterSpacing: "0.06em" }}>任務記錄</p>
           <div style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-md)", padding: "8px 12px", minHeight: 40 }}>
             {questLog.length === 0 && <p style={{ fontSize: 12, color: "var(--color-text-tertiary)", margin: 0 }}>尚未接受任何任務</p>}
-            {questLog.map(q => {
+            {questLog.filter(q => !q.claimed).map(q => {
               const def = QUEST_DEFS.find(d => d.id === q.questId);
               if (!def) return null;
               const step = def.steps[q.stepIdx];
+              const canClaim = q.completed && !q.claimed;
               return (
                 <div key={q.questId} style={{ fontSize: 12, padding: "4px 0", borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
-                  <span style={{ fontWeight: 500, color: q.completed ? "var(--color-text-success)" : "var(--color-text-primary)" }}>
-                    {q.completed ? "✓ " : "◎ "}{def.title}
+                  <span style={{
+                    fontWeight: 500,
+                    color: canClaim
+                      ? "#f0c040"
+                      : q.completed
+                        ? "var(--color-text-success)"
+                        : "var(--color-text-primary)",
+                  }}>
+                    {canClaim ? "📬 " : q.completed ? "✓ " : "◎ "}
+                    {def.title}
+                    {canClaim && <span style={{ fontSize: 10, marginLeft: 6, color: "#c09030" }}>（可交差）</span>}
                   </span>
                   {!q.completed && step && (
                     <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginLeft: 8 }}>
                       → {step.desc}
+                      {step.type === 'kill' && (
+                        <> ({q.progress?.[q.stepIdx] ?? 0}/{step.count})</>
+                      )}
                     </span>
                   )}
                 </div>
@@ -2084,6 +2179,20 @@ export default function MazeFirstPerson() {
       {mazeData && <MazeDataPanel data={mazeData} walls={g.current.walls} />}
 
       </>)}
+
+      {/* ── 任務接取 / 領獎彈窗（全螢幕覆蓋）── */}
+      {activeQuestOffer && (() => {
+        const def = QUEST_DEFS.find(q => q.id === activeQuestOffer.questId);
+        return (
+          <QuestOfferPanel
+            questDef={def}
+            mode={activeQuestOffer.mode}
+            playerQuest={activeQuestOffer.playerQuest}
+            onAccept={handleQuestAccept}
+            onDecline={activeQuestOffer.mode === 'offer' ? handleQuestDecline : undefined}
+          />
+        );
+      })()}
 
     </div>
   );

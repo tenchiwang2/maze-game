@@ -146,13 +146,36 @@ export function getItemQty(player, itemId) {
 
 // ── 任務系統 ─────────────────────────────────
 export function addQuest(player, questDef) {
-  if (player.quests.some(q => q.questId === questDef.id)) return;
+  // 已存在且未 claimed → 不重複接
+  const existing = player.quests.find(q => q.questId === questDef.id);
+  if (existing && !existing.claimed) return;
+  // repeatable 且已 claimed → 允許重新接（移除舊記錄）
+  if (existing && existing.claimed) {
+    const idx = player.quests.indexOf(existing);
+    if (idx >= 0) player.quests.splice(idx, 1);
+  }
   player.quests.push({
-    questId: questDef.id,
-    stepIdx: 0,
+    questId:   questDef.id,
+    stepIdx:   0,
     completed: false,
-    progress: {},      // { [stepIdx]: current }
+    claimed:   false,     // ← 已領獎才設為 true
+    progress:  {},        // { [stepIdx]: current }
   });
+}
+
+// 領取任務獎勵，回傳 reward 物件（或 null 若不可領）
+export function claimReward(player, questDef) {
+  const qState = player.quests.find(
+    q => q.questId === questDef.id && q.completed && !q.claimed
+  );
+  if (!qState) return null;
+  qState.claimed = true;
+
+  const r = questDef.reward ?? {};
+  if (r.gold) addItem(player, 'gold', r.gold);
+  (r.items ?? []).forEach(({ itemId, qty }) => addItem(player, itemId, qty));
+  // exp 由呼叫方用 gainExp() 處理，這裡回傳 exp 值
+  return r;
 }
 
 // 檢查指定步驟是否完成，完成則推進

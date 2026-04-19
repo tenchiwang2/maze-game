@@ -9,9 +9,11 @@ export const DIALOGUES = {
   ],
   guild_master: [
     { speaker: '公會長', text: '歡迎來到冒險者公會！這裡有各種委託任務等待完成。' },
-    { speaker: '公會長', text: '建議新手先去河畔城或東港城熟悉環境。' },
-    { speaker: '公會長', text: '霜城要塞的冰雪狼很危險，要做好充分準備再去。', choices: [
-      { text: '謝謝指引！', next: null },
+    { speaker: '公會長', text: '建議新手先去河畔城或東港城熟悉環境。霜城要塞的冰雪狼很危險，要做好充分準備再去。' },
+    { speaker: '公會長', text: '我這裡有幾個委託，你有興趣接嗎？', choices: [
+      { text: '我想接「公會入會試煉」', questOffer: 'quest_guild_trial', next: null },
+      { text: '我想接「古代神殿的秘密」', questOffer: 'quest_temple', next: null },
+      { text: '不了，謝謝。', next: null },
     ]},
   ],
   riverside_elder: [
@@ -22,8 +24,9 @@ export const DIALOGUES = {
   ],
   harbor_captain: [
     { speaker: '港口長', text: '歡迎來到東港城！我們是亞薩王國最繁忙的港口。' },
-    { speaker: '港口長', text: '最近有海盜在附近活動，城內也不安全，要小心。', choices: [
-      { text: '多謝提醒！', next: null },
+    { speaker: '港口長', text: '最近哥布林在附近活動猖獗，嚴重影響貿易。我正在找人幫忙解決這個麻煩。', choices: [
+      { text: '我來幫忙！（接受護衛任務）', questOffer: 'quest_harbor_guard', next: null },
+      { text: '多謝提醒，保重。', next: null },
     ]},
   ],
   harbor_merchant: [
@@ -35,8 +38,9 @@ export const DIALOGUES = {
   sultan_speech: [
     { speaker: '沙漠蘇丹', text: '外來者，你敢踏入沙漠帝國，勇氣可嘉。' },
     { speaker: '沙漠蘇丹', text: '我們的帝國統治著廣大的沙漠，擁有無盡的財富。' },
-    { speaker: '沙漠蘇丹', text: '若你能通過火山洞窟的試煉，或許我能承認你的實力。', choices: [
-      { text: '我會接受試煉的。', next: null },
+    { speaker: '沙漠蘇丹', text: '若你能通過火山洞窟的試煉，擊倒其中的守護者，或許我能承認你的實力，並賜予獎賞。', choices: [
+      { text: '接受火山試煉！', questOffer: 'quest_volcano', next: null },
+      { text: '我還沒準備好。', next: null },
     ]},
   ],
   oasis_elder: [
@@ -60,8 +64,9 @@ export const DIALOGUES = {
   frost_chief: [
     { speaker: '冰雪酋長', text: '外人，這裡是雪域聯盟的領土，輕易不接待外客。' },
     { speaker: '冰雪酋長', text: '我們世代守護北方的冰封秘密，不允許任何人破壞這片土地的寧靜。' },
-    { speaker: '冰雪酋長', text: '若你是有誠意的冒險者，可以幫助我們清除入侵的怪物。', choices: [
-      { text: '我願意幫忙。', next: null },
+    { speaker: '冰雪酋長', text: '不過……若你是有誠意的冒險者，可以幫助我們清除入侵的冰雪狼。報酬不會虧待你。', choices: [
+      { text: '我願意接受任務！', questOffer: 'quest_frost_wolves', next: null },
+      { text: '我只是路過。', next: null },
     ]},
   ],
   icelake_elder: [
@@ -162,14 +167,16 @@ export const DIALOGUES = {
   ],
   npc_caravan: [
     { speaker: '商隊長', text: '啊，旅人！要買點沙漠特產嗎？駱駝奶、香料、珍貴礦石都有！' },
-    { speaker: '商隊長', text: '不過沙漠路上盜匪猖獗，有時候要繞遠路才安全。', choices: [
-      { text: '一路順風！', next: null },
+    { speaker: '商隊長', text: '不過沙漠路上盜匪猖獗，我的商隊需要護衛隨行。你有興趣嗎？報酬豐厚！', choices: [
+      { text: '我可以護送你們！', questOffer: 'quest_desert_caravan', next: null },
+      { text: '不了，祝一路順風。', next: null },
     ]},
   ],
   npc_shaman: [
     { speaker: '沙漠祭司', text: '沙漠之神告訴我，你是一個命運特殊的旅人。' },
-    { speaker: '沙漠祭司', text: '火山的深處封印著古老的力量……只有心懷勇氣的人才能觸碰。', choices: [
-      { text: '感謝指引。', next: null },
+    { speaker: '沙漠祭司', text: '我感應到古代神殿的封印出現了裂縫……黑暗正在滲透。我需要一個勇者前往確認。', choices: [
+      { text: '我可以去調查。', questOffer: 'quest_shaman_ritual', next: null },
+      { text: '感謝指引，我考慮看看。', next: null },
     ]},
   ],
   npc_cult_priest: [
@@ -193,14 +200,16 @@ export const DIALOGUES = {
   ],
   npc_ice_mage: [
     { speaker: '冰法師', text: '這片大地蘊含著上古冰魔法的殘留，只有雪域的人能感受到。' },
-    { speaker: '冰法師', text: '若你找到冰晶礦石，帶來給我，我可以幫你淬煉成強力魔法武器。', choices: [
-      { text: '我會留意的。', next: null },
+    { speaker: '冰法師', text: '我的研究需要冰湖附近礦洞的冰晶礦石，但那裡有骷髏士兵把守，我無法親自前往……', choices: [
+      { text: '我可以幫你採集！', questOffer: 'quest_ice_crystal', next: null },
+      { text: '聽起來很危險，不了。', next: null },
     ]},
   ],
   npc_hunter_snow: [
     { speaker: '獵人', text: '這片雪地是我的獵場，我追蹤過狼群、雪熊，甚至是更危險的東西。' },
-    { speaker: '獵人', text: '冰海盜最近在北岸很活躍，要去港口的話記得帶好武器。', choices: [
-      { text: '謝謝提示。', next: null },
+    { speaker: '獵人', text: '我的夥伴在雪嶺村附近失蹤了，懷疑遇上了骷髏士兵。你願意幫我調查嗎？', choices: [
+      { text: '我去幫你查清楚！', questOffer: 'quest_snow_missing', next: null },
+      { text: '抱歉，我幫不上忙。', next: null },
     ]},
   ],
   npc_betrayer: [

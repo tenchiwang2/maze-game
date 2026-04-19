@@ -14,7 +14,8 @@ const PANEL = {
   zIndex: 10,
 };
 
-export default function DialoguePanel({ lines, onClose }) {
+// onQuestOffer(questId, continueDialogue) — 當選項含 questOffer 時呼叫
+export default function DialoguePanel({ lines, onClose, onQuestOffer }) {
   const [idx, setIdx] = useState(0);
 
   if (!lines || lines.length === 0) { onClose(); return null; }
@@ -30,6 +31,16 @@ export default function DialoguePanel({ lines, onClose }) {
     if (choiceNext === -1) { onClose(); return; }
     if (choiceNext < lines.length) setIdx(choiceNext);
     else onClose();
+  }
+
+  function handleChoice(c) {
+    if (c.questOffer && onQuestOffer) {
+      // 暫停對話，交由 QuestOfferPanel 處理；
+      // accept / decline 後都繼續到 c.next
+      onQuestOffer(c.questOffer, () => next(c.next ?? null));
+    } else {
+      next(c.next);
+    }
   }
 
   return (
@@ -48,14 +59,14 @@ export default function DialoguePanel({ lines, onClose }) {
       {line.choices ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {line.choices.map((c, i) => (
-            <button key={i} onClick={() => next(c.next)}
+            <button key={i} onClick={() => handleChoice(c)}
               style={{
                 textAlign: 'left', fontSize: 13, padding: '7px 12px',
                 borderRadius: 5, background: 'rgba(80,120,255,0.15)',
                 border: '0.5px solid rgba(80,120,255,0.5)',
                 color: '#aaccff', cursor: 'pointer',
               }}>
-              {'▶ '}{c.text}
+              {c.questOffer ? '📜 ' : '▶ '}{c.text}
             </button>
           ))}
         </div>
