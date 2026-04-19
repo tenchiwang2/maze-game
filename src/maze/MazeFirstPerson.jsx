@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { FOV, NUM_RAYS, MOVE_SPEED, TURN_SPEED, INTERACT_DIST, MM, WORLD_MOVE_SPEED, ENTRY_PROXIMITY, TORCH_RADIUS, AMBIENT } from './constants.jsx';
-import { generateMaze, buildGrid, doorWorldPos, resolveEvents } from './mazeGenerator.jsx';
+import { generateMaze, buildGrid, doorWorldPos, resolveEvents, findDeadEnds, findFixedRoomFreeCells } from './mazeGenerator.jsx';
 import { loadTexture, TexUpload, ZoneTexRow } from './textures.jsx';
 import {
   castRays, renderFloorCeiling, renderWalls,
   getSpriteInfo,
-  drawEntryArch, drawExitPortal, drawEventMarker,
+  drawEntryArch, drawExitPortal, drawEventMarker, drawEnemy,
   drawMinimap, drawHUD,
 } from './renderer.jsx';
 import { DEFAULT_FIXED, DEFAULT_GLOBAL, EVENT_TYPES, EVENT_ICONS } from './defaults.jsx';
@@ -15,7 +15,7 @@ import { isPassable, findWorldSpawn, getNearbyLocation, LOC_TYPE } from './world
 import { WORLD_DEF, DIALOGUES, SHOPS, QUEST_DEFS } from './worldData.jsx';
 import { WORLD_FACTORIES, WORLD_FACTORY_IDS } from './worldFactory.jsx';
 import { drawOverworld } from './OverworldRenderer.jsx';
-import { createPlayer, addItem, checkQuestStep } from './playerState.jsx';
+import { createPlayer, addItem, checkQuestStep, hasItem } from './playerState.jsx';
 import { applyCombatResult } from './combatService.js';
 import { rollLoot } from './combatEngine.jsx';
 import { ITEMS } from './itemData.jsx';
@@ -24,7 +24,8 @@ import DialoguePanel  from './DialoguePanel.jsx';
 import CombatPanel    from './CombatPanel.jsx';
 import ShopPanel      from './ShopPanel.jsx';
 import InventoryPanel from './InventoryPanel.jsx';
-import StatsPanel     from './StatsPanel.jsx';
+import StatsPanel          from './StatsPanel.jsx';
+import ToastNotification   from './ToastNotification.jsx';
 import CampRestPanel, { calcRestRecovery } from './CampRestPanel.jsx';
 import TownPanel      from './TownPanel.jsx';
 import { on, emit } from './eventBus.js';
@@ -33,6 +34,93 @@ import {
   TIME_DIALOGUE, TIME_SHOP, TIME_CHEST, TIME_COMBAT,
   formatTime, advanceTime, minsToNextDawn, getTimePeriod,
 } from './timeSystem.js';
+
+// ─────────────────────────────────────────────
+//  敵人 AI 常數
+// ─────────────────────────────────────────────
+const ENEMY_DETECT_RANGE = 5.0;   // 格子單位：玩家偵測距離
+const ENEMY_TRIGGER_DIST = 0.85;  // 格子單位：觸發戰鬥距離
+const ENEMY_BASE_SPEED   = 0.022; // 格子/frame
+
+// ─────────────────────────────────────────────
+//  全局輔助函式（純粹，不依賴 React state）
+// ─────────────────────────────────────────────
+function shuffleArr(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/**
+ * 將 globalEvents（無 r,c）自動配置到死路或房間空格。
+ * - chest    → placed 陣列（加上 r,c，供 resolveEvents 使用）
+ * - combat   → enemies 陣列（成為可移動敵人實體）
+ * - 其他     → 保留進 placed
+ * @returns {{ placed: object[], enemies: object[] }}
+ */
+function autoPlaceGlobalEvents(rawGlobal, grid, rooms, rows, cols, ENEMIES_DEF) {
+  const deadEnds  = findDeadEnds(grid, rows, cols);
+  const roomFree  = findFixedRoomFreeCells(rooms);
+
+  // 排除已被固定房間事件占用的格子 + 入口 + 出口
+  const used = new Set([`0,0`, `${rows - 1},${cols - 1}`]);
+  rooms.forEach(rm => {
+    if (!rm.fixed) return;
+    (rm.events || []).forEach(ev => used.add(`${rm.r + ev.dr},${rm.c + ev.dc}`));
+  });
+
+  const candidates = shuffleArr([
+    ...deadEnds.filter(p => !used.has(`${p.r},${p.c}`)),
+    ...roomFree.filter(p => !used.has(`${p.r},${p.c}`)),
+  ]);
+
+  let cidx = 0;
+  const placed  = [];
+  const enemies = [];
+
+  rawGlobal.forEach(ev => {
+    if (ev.type === 'chest') {
+      const pos = candidates[cidx];
+      if (pos) { used.add(`${pos.r},${pos.c}`); cidx++; placed.push({ ...ev, r: pos.r, c: pos.c }); }
+      // 若找不到格子，此寶箱跳過（避免塞在牆裡）
+    } else if (ev.type === 'combat' && ev.enemyId) {
+      // 成為遊走敵人
+      const pos = candidates[cidx];
+      if (pos) {
+        used.add(`${pos.r},${pos.c}`); cidx++;
+        const def = ENEMIES_DEF[ev.enemyId] ?? {};
+        enemies.push({
+          id: ev.id,
+          enemyId: ev.enemyId,
+          icon: def.icon ?? '👹',
+          name: def.name ?? ev.text ?? '敵人',
+          px: 2 * pos.c + 1.5,
+          py: 2 * pos.r + 1.5,
+          dirAngle: Math.random() * Math.PI * 2,
+          speed: ENEMY_BASE_SPEED,
+          hp: def.hp ?? 30,
+          maxHp: def.hp ?? 30,
+          alive: true,
+          state: 'wander',
+          stateTimer: 40 + Math.floor(Math.random() * 80),
+          bobOffset: Math.random() * Math.PI * 2,
+        });
+      }
+    } else {
+      // 其他事件：若已有 r,c 直接放入，否則也配置位置
+      if (ev.r != null && ev.c != null) {
+        placed.push(ev);
+      } else {
+        const pos = candidates[cidx];
+        if (pos) { used.add(`${pos.r},${pos.c}`); cidx++; placed.push({ ...ev, r: pos.r, c: pos.c }); }
+      }
+    }
+  });
+
+  return { placed, enemies };
+}
 
 // ─────────────────────────────────────────────
 //  單張地圖建立輔助（供多地圖模式使用）
@@ -433,6 +521,8 @@ export default function MazeFirstPerson() {
   const [showInventory, setShowInventory]     = useState(false);
   const [showStats,     setShowStats]         = useState(false);
   const [showCampRest,  setShowCampRest]      = useState(false);
+  const [cheatFullMap,  setCheatFullMap]      = useState(false);
+  const [toasts,        setToasts]            = useState([]);
   const [activePort, setActivePort]           = useState(null); // 港口旅行面板
   const [playerStats, setPlayerStats]         = useState(() => createPlayer()); // for re-render trigger
   const [questLog, setQuestLog]               = useState([]);
@@ -470,6 +560,7 @@ export default function MazeFirstPerson() {
     uiPaused: false,
     gameTime: TIME_START,  // 分鐘，game loop 用
     timeAccum: 0,          // 移動距離累積器
+    dungeonEnemies: [],    // 遊走敵人實體陣列
   });
   const renderRef = useRef(null);
   const eventsRef = useRef(events);
@@ -486,35 +577,55 @@ export default function MazeFirstPerson() {
 
     if (ev.type === 'teleport' && ev.destR != null) {
       g.current.px = 2 * ev.destC + 1 + 0.5; g.current.py = 2 * ev.destR + 1 + 0.5;
+      addToast({ type: 'teleport', icon: '✨', title: '傳送', body: ev.text || '移動至新位置', duration: 1800 });
     }
-    if (ev.type === 'win' && !g.current.won) { g.current.won = true; setWon(true); }
+    if (ev.type === 'win' && !g.current.won) {
+      g.current.won = true; setWon(true);
+      addToast({ type: 'message', icon: '🏆', title: '目標達成！', body: ev.text, duration: 4000 });
+    }
 
     // ── RPG 事件 ──
+    if (ev.type === 'message') {
+      addToast({ type: 'message', icon: '📜', title: ev.text, duration: 3000 });
+    }
     if (ev.type === 'npc' && ev.dialogueId) {
       g.current.uiPaused = true;
       setActiveDialogue(ev.dialogueId);
+      addToast({ type: 'npc', icon: '💬', title: ev.text || 'NPC', body: '按下對話繼續', duration: 1800 });
     }
     if (ev.type === 'shop' && ev.shopId) {
       g.current.uiPaused = true;
       setActiveShop(ev.shopId);
+      addToast({ type: 'shop', icon: '🛒', title: ev.text || '商店', body: '進入商店', duration: 1800 });
     }
     if (ev.type === 'combat' && ev.enemyId) {
       g.current.uiPaused = true;
       emit('combat:start', { enemyId: ev.enemyId });
+      addToast({ type: 'combat', icon: '⚔', title: '遭遇戰鬥！', body: ev.text, duration: 1800 });
     }
     if (ev.type === 'chest') {
       const p = playerRef.current;
       addItem(p, ev.itemId, ev.qty ?? 1);
-      const itemName = ITEMS[ev.itemId]?.name || ev.itemId;
-      setLog(prev => [{ id: Date.now() + 1, type: 'chest', text: `獲得 ${itemName} ×${ev.qty ?? 1}` }, ...prev].slice(0, 30));
+      const item = ITEMS[ev.itemId];
+      const itemName = item?.name || ev.itemId;
+      const qty = ev.qty ?? 1;
+      setLog(prev => [{ id: Date.now() + 1, type: 'chest', text: `獲得 ${itemName} ×${qty}` }, ...prev].slice(0, 30));
       setPlayerStats({ ...p });
+      addToast({
+        type: 'chest',
+        icon: item?.icon ?? '📦',
+        title: `獲得 ${itemName}`,
+        body: qty > 1 ? `×${qty}` : item?.desc,
+        duration: 3000,
+      });
       // 任務：collect 進度
       QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'collect', { itemId: ev.itemId }));
       g.current.gameTime = advanceTime(g.current.gameTime, TIME_CHEST);
       setGameTime(g.current.gameTime);
     }
     if (ev.type === 'town_gate') {
-      doExitToOverworld();
+      g.current.transitionPrompt = 'gate';
+      setTransitionPrompt('gate');
     }
     if (ev.type === 'port_travel') {
       g.current.uiPaused = true;
@@ -594,6 +705,8 @@ export default function MazeFirstPerson() {
     s.won = false; s.grid = null;
     s.uiPaused = false;
     s.transitionPrompt = null; s.wasOnPortal = false;
+    s.dungeonBaseLightCfg = null; // 清除地城基礎光源
+    s.dungeonEnemies = [];        // 清除遊走敵人
     setGameMode('OVERWORLD');
     setActiveTownLoc(null);
     setWon(false);
@@ -633,10 +746,17 @@ export default function MazeFirstPerson() {
       QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'reach', { locationId: loc.id }));
       return;
     }
-    s.lightCfg = {
-      ambient:     cfg.ambient     ?? AMBIENT,
-      torchRadius: cfg.torchRadius ?? TORCH_RADIUS,
-    };
+    {
+      // 保存地城基礎光源（供 applyLightBuff 疊加用）
+      const baseTorch   = cfg.torchRadius ?? TORCH_RADIUS;
+      const baseAmbient = cfg.ambient     ?? AMBIENT;
+      s.dungeonBaseLightCfg = { torchRadius: baseTorch, ambient: baseAmbient };
+      const buff = playerRef.current.lightBuff;
+      s.lightCfg = {
+        torchRadius: buff ? Math.max(baseTorch, buff.torchRadius) : baseTorch,
+        ambient:     buff ? Math.max(baseAmbient, buff.ambient)   : baseAmbient,
+      };
+    }
     s.won = false; s.t = 0; s.keys = {}; s.interactCooldown = 0;
     s.transitionPrompt = null; s.wasOnPortal = false; s.uiPaused = false;
     setTransitionPrompt(null); setWon(false); setLog([]);
@@ -672,7 +792,16 @@ export default function MazeFirstPerson() {
       const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
       s.px = sp.px; s.py = sp.py; s.angle = Math.PI / 4;
       s.cols = cfg.cols; s.rows = cfg.rows;
-      setCurrentMapIdx(0); setEvents([]); setMazeData(null);
+      // 多層地城：第一層也做事件 + 敵人自動配置
+      {
+        const fr0 = cfg.fixedRooms ?? [];
+        const { placed: pl0, enemies: en0 } = autoPlaceGlobalEvents(
+          cfg.globalEvents ?? [], s.grid, s.rooms, cfg.rows, cfg.cols, ENEMIES
+        );
+        setEvents(resolveEvents(s.rooms, fr0, pl0));
+        s.dungeonEnemies = en0;
+      }
+      setCurrentMapIdx(0); setMazeData(null);
     } else {
       s.multiMap = false; s.maps = []; s.currentMapIdx = 0;
       setCurrentMapIdx(0);
@@ -690,7 +819,12 @@ export default function MazeFirstPerson() {
       s.entryGX = 1; s.entryGY = 1;
       s.exitGX = 2 * xCell.c + 1; s.exitGY = 2 * xCell.r + 1;
       s.px = 1.5; s.py = 1.5; s.angle = Math.PI / 4;
-      setEvents(resolveEvents(rooms, fr, cfg.globalEvents ?? []));
+      // 自動將 globalEvents 配置到死路 / 房間空格，並生成遊走敵人
+      const { placed, enemies } = autoPlaceGlobalEvents(
+        cfg.globalEvents ?? [], grid, rooms, cfg.rows, cfg.cols, ENEMIES
+      );
+      setEvents(resolveEvents(rooms, fr, placed));
+      s.dungeonEnemies = enemies;
       setMazeData(null);
     }
 
@@ -715,6 +849,65 @@ export default function MazeFirstPerson() {
       m.doors = s.doors; m.grid = grid; m.zoneMap = zoneMap; m.doorMap = doorMap;
     }
     setLog(prev => [{ id: Date.now(), type: "door", text: `門已${s.doors[idx].closed ? "關閉" : "開啟"}` }, ...prev].slice(0, 30));
+  }
+
+  // ── 敵人 AI 更新（每 frame 呼叫）──
+  function updateDungeonEnemies() {
+    const s = g.current;
+    if (!s.dungeonEnemies?.length || !s.grid) return;
+
+    for (const e of s.dungeonEnemies) {
+      if (!e.alive) continue;
+
+      const dx = s.px - e.px, dy = s.py - e.py;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      // 觸發戰鬥
+      if (dist < ENEMY_TRIGGER_DIST && !s.uiPaused) {
+        e.alive = false;
+        s.uiPaused = true;
+        emit('combat:start', { enemyId: e.enemyId });
+        addToast({ type: 'combat', icon: '⚔️', title: `遭遇 ${e.name}！`, duration: 1800 });
+        return; // 一次只一場戰鬥
+      }
+
+      // 狀態切換
+      if (dist < ENEMY_DETECT_RANGE) {
+        e.state = 'chase';
+      } else if (dist > ENEMY_DETECT_RANGE * 1.5 && e.state === 'chase') {
+        e.state = 'wander';
+      }
+
+      // 決定移動方向
+      let angle = e.dirAngle;
+      if (e.state === 'chase') {
+        angle = Math.atan2(dy, dx);
+      } else {
+        e.stateTimer--;
+        if (e.stateTimer <= 0) {
+          e.dirAngle = Math.random() * Math.PI * 2;
+          e.stateTimer = 60 + Math.floor(Math.random() * 80);
+        }
+        angle = e.dirAngle;
+      }
+
+      // 移動（簡易碰撞：分軸嘗試）
+      const spd = e.speed;
+      const nx = e.px + Math.cos(angle) * spd;
+      const ny = e.py + Math.sin(angle) * spd;
+      const gx = Math.floor(nx), gy = Math.floor(ny);
+      if (s.grid[gy]?.[gx] === 0) {
+        e.px = nx; e.py = ny;
+      } else {
+        // 撞牆：換方向
+        e.dirAngle = Math.random() * Math.PI * 2;
+        e.stateTimer = 20 + Math.floor(Math.random() * 30);
+        e.state = 'wander';
+      }
+    }
+
+    // 清除已死亡的敵人
+    s.dungeonEnemies = s.dungeonEnemies.filter(e => e.alive);
   }
 
   renderRef.current = () => {
@@ -748,6 +941,7 @@ export default function MazeFirstPerson() {
             s.timeAccum -= minsGained * TIME_WORLD_PER_MIN;
             s.gameTime = advanceTime(s.gameTime, minsGained);
             setGameTime(s.gameTime);
+            tickLightBuff();
           }
         }
 
@@ -798,12 +992,14 @@ export default function MazeFirstPerson() {
           s.timeAccum -= minsGained * TIME_DUNGEON_PER_MIN;
           s.gameTime = advanceTime(s.gameTime, minsGained);
           setGameTime(s.gameTime);
+          tickLightBuff();
+          applyLightBuff();
         }
       }
 
       const onExitPortal  = Math.floor(s.px) === s.exitGX  && Math.floor(s.py) === s.exitGY;
-      const onEntryPortal = s.multiMap && s.currentMapIdx > 0
-        && Math.floor(s.px) === s.entryGX && Math.floor(s.py) === s.entryGY;
+      const onEntryPortal = Math.floor(s.px) === s.entryGX && Math.floor(s.py) === s.entryGY
+        && (s.multiMap ? s.currentMapIdx > 0 : s.gameMode === 'DUNGEON_INTERIOR');
 
       // 玩家離開傳送門後才能再觸發詢問
       if (s.wasOnPortal && !onExitPortal && !onEntryPortal) {
@@ -822,10 +1018,9 @@ export default function MazeFirstPerson() {
             s.transitionPrompt = 'fwd';
             setTransitionPrompt('fwd');
           } else if (s.gameMode === 'DUNGEON_INTERIOR') {
-            // RPG 模式：出口 → 返回大地圖
-            doExitToOverworld();
-            s.animId = requestAnimationFrame(() => renderRef.current?.());
-            return;
+            // RPG 模式：出口 → 詢問是否返回大地圖
+            s.transitionPrompt = 'gate';
+            setTransitionPrompt('gate');
           } else {
             // 舊的「迷宮遊戲」模式
             s.won = true; setWon(true);
@@ -871,6 +1066,9 @@ export default function MazeFirstPerson() {
         });
         if (nearest !== null) toggleDoor(nearest);
       }
+
+      // ── 敵人 AI 更新 ──
+      updateDungeonEnemies();
     }
 
     const txs = textureRef.current;
@@ -882,7 +1080,11 @@ export default function MazeFirstPerson() {
       + 0.02 * Math.sin(s.t * 1.37);
     const torchBright = Math.max(0.7, Math.min(1.1, flicker));
 
-    const lightCfg = s.lightCfg || {};
+    const lightCfg = {
+      ...(s.lightCfg || {}),
+      fullMap:     s.cheatFullMap ?? false,
+      showEnemies: (s.cheatFullMap ?? false) || hasItem(playerRef.current, 'night_pearl'),
+    };
     const rays = castRays(s.grid, s.zoneMap, s.doorMap, s.px, s.py, s.angle, gW, gH);
 
     // 1. 地板 + 天花板（逐像素 ImageData）
@@ -891,20 +1093,24 @@ export default function MazeFirstPerson() {
     // 2. 牆壁（貼圖切片或平面填色）
     renderWalls(ctx, W, H, rays, txs, s.doors, torchBright, lightCfg);
 
-    // 3. 精靈
+    // 3. 精靈（傳送門 + 事件 + 敵人，依距離由遠到近繪製）
     const sprites = [
       { type: "entry", wx: s.entryGX + 0.5, wy: s.entryGY + 0.5 },
-      { type: "exit", wx: s.exitGX + 0.5, wy: s.exitGY + 0.5 },
+      { type: "exit",  wx: s.exitGX  + 0.5, wy: s.exitGY  + 0.5 },
       ...eventsRef.current
         .filter(ev => !ev.triggered || ev.repeatable)
-        .map(ev => ({ type: "event", wx: 2 * ev.c + 1 + 0.5, wy: 2 * ev.r + 1 + 0.5, ev }))
+        .map(ev => ({ type: "event", wx: 2 * ev.c + 1 + 0.5, wy: 2 * ev.r + 1 + 0.5, ev })),
+      ...(s.dungeonEnemies ?? [])
+        .filter(e => e.alive)
+        .map(e => ({ type: "enemy", wx: e.px, wy: e.py, e })),
     ];
     sprites.sort((a, b) => Math.hypot(b.wx - s.px, b.wy - s.py) - Math.hypot(a.wx - s.px, a.wy - s.py));
     for (const sp of sprites) {
       const info = getSpriteInfo(sp.wx, sp.wy, s.px, s.py, s.angle, W, rays);
       if (!info) continue;
       if (sp.type === "entry") drawEntryArch(ctx, info.screenX, info.dist, H);
-      else if (sp.type === "exit") drawExitPortal(ctx, info.screenX, info.dist, H, s.t);
+      else if (sp.type === "exit")  drawExitPortal(ctx, info.screenX, info.dist, H, s.t);
+      else if (sp.type === "enemy") drawEnemy(ctx, info.screenX, info.dist, H, sp.e, s.t);
       else drawEventMarker(ctx, info.screenX, info.dist, H, sp.ev, s.t);
     }
 
@@ -915,7 +1121,7 @@ export default function MazeFirstPerson() {
       const d = Math.hypot(wx - s.px, wy - s.py);
       if (d < nearDoorDist) { nearDoor = door; nearDoorDist = d; }
     });
-    drawMinimap(ctx, s.walls, s.cols, s.rows, s.px, s.py, s.angle, s.rooms, s.eCell, s.xCell, eventsRef.current, s.doors, torchBright, s.grid, lightCfg);
+    drawMinimap(ctx, s.walls, s.cols, s.rows, s.px, s.py, s.angle, s.rooms, s.eCell, s.xCell, eventsRef.current, s.doors, torchBright, s.grid, lightCfg, s.dungeonEnemies ?? []);
     drawHUD(ctx, W, H, nearDoor ? `[E]  ${nearDoor.closed ? "開門" : "關門"}` : null);
 
     s.animId = requestAnimationFrame(() => renderRef.current?.());
@@ -1052,6 +1258,10 @@ export default function MazeFirstPerson() {
     s.transitionPrompt = null;
     setTransitionPrompt(null);
     s.wasOnPortal = true;
+    if (dir === 'gate') {
+      doExitToOverworld();
+      return;
+    }
     if (dir === 'fwd') {
       s.currentMapIdx++;
       // 若已是最後一層 → 返回大地圖
@@ -1060,6 +1270,7 @@ export default function MazeFirstPerson() {
         return;
       }
       syncCurrentMap(s);
+      s.dungeonEnemies = []; // 切換樓層時清除敵人（新樓層需重新生成）
       eventsRef.current = []; setEvents([]);
       setCurrentMapIdx(s.currentMapIdx);
       const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
@@ -1072,6 +1283,7 @@ export default function MazeFirstPerson() {
         return;
       }
       syncCurrentMap(s);
+      s.dungeonEnemies = [];
       eventsRef.current = []; setEvents([]);
       setCurrentMapIdx(s.currentMapIdx);
       const sp = findSafeSpawn(s.grid, s.exitGX, s.exitGY);
@@ -1112,10 +1324,44 @@ export default function MazeFirstPerson() {
   const typeColor = { message: "var(--color-text-primary)", teleport: "var(--color-text-info)", door: "var(--color-text-warning)", win: "var(--color-text-success)" };
   const safeMin = Math.min(minRoom, maxRoom), safeMax = Math.max(minRoom, maxRoom);
 
+  // ── 畫面通知 ──
+  function addToast({ type = 'message', icon = '📢', title, body, duration = 2500 }) {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev.slice(-4), { id, type, icon, title, body, duration }]);
+  }
+
   // ── 時間工具 ──
   function advanceGameTime(minutes) {
     g.current.gameTime = advanceTime(g.current.gameTime, minutes);
     setGameTime(g.current.gameTime);
+  }
+
+  // ── 光源 buff 套用 / 清除 ──
+  function applyLightBuff() {
+    const p   = playerRef.current;
+    const s   = g.current;
+    const buff = p.lightBuff;
+    // 以地城基礎設定為底，buff 只能增強不能減弱
+    const base = s.dungeonBaseLightCfg ?? { torchRadius: TORCH_RADIUS, ambient: AMBIENT };
+    s.lightCfg = buff
+      ? { torchRadius: Math.max(base.torchRadius, buff.torchRadius),
+          ambient:     Math.max(base.ambient,     buff.ambient) }
+      : { ...base };
+  }
+
+  function tickLightBuff() {
+    const p = playerRef.current;
+    if (!p.lightBuff) return;
+    if (p.lightBuff.duration === Infinity) return; // 永久效果，不過期
+    const now     = g.current.gameTime;
+    const started = p.lightBuff.startedAt;
+    // 經過的遊戲分鐘（跨午夜也正確）
+    const elapsed = (now - started + 1440) % 1440;
+    if (elapsed >= p.lightBuff.duration) {
+      p.lightBuff = null;
+      applyLightBuff();
+      setPlayerStats({ ...p });
+    }
   }
 
   function doCampRest() {
@@ -1130,6 +1376,7 @@ export default function MazeFirstPerson() {
     p.mp = Math.min(p.maxMp, p.mp + mp);
     g.current.gameTime = advanceTime(g.current.gameTime, restMins);
     setGameTime(g.current.gameTime);
+    tickLightBuff(); // 休息可能讓火把過期
     setPlayerStats({ ...p });
     setShowCampRest(false);
     g.current.uiPaused = false;
@@ -1155,7 +1402,29 @@ export default function MazeFirstPerson() {
       const p = playerRef.current;
 
       const { leveled, levelMsg } = applyCombatResult(result, p, QUEST_DEFS);
-      if (leveled) { setLevelUpMsg(levelMsg); setTimeout(() => setLevelUpMsg(''), 3000); }
+      if (leveled) {
+        setLevelUpMsg(levelMsg);
+        setTimeout(() => setLevelUpMsg(''), 3000);
+        addToast({ type: 'message', icon: '⭐', title: levelMsg, duration: 3500 });
+      }
+
+      // 戰鬥結果通知
+      if (result?.won) {
+        const lootLines = (result.loot || [])
+          .map(l => `${ITEMS[l.itemId]?.icon ?? '📦'} ${ITEMS[l.itemId]?.name ?? l.itemId} ×${l.qty}`)
+          .join('　');
+        addToast({
+          type: 'chest',
+          icon: '🎉',
+          title: '戰鬥勝利！',
+          body: lootLines || (result.exp ? `EXP +${result.exp}` : undefined),
+          duration: 3000,
+        });
+      } else if (result?.fled) {
+        addToast({ type: 'door', icon: '💨', title: '成功逃跑', duration: 1800 });
+      } else if (!result?.won) {
+        addToast({ type: 'combat', icon: '💀', title: '戰鬥失敗', body: '傳送至入口', duration: 3000 });
+      }
 
       if (!result?.fled) {
         g.current.gameTime = advanceTime(g.current.gameTime, TIME_COMBAT);
@@ -1330,6 +1599,37 @@ export default function MazeFirstPerson() {
                 </span>
               </div>
 
+              {/* 光源 buff 狀態 */}
+              {playerStats.lightBuff && (() => {
+                const buff = playerStats.lightBuff;
+                const isInfinite = buff.duration === Infinity;
+                // elapsed = 已過去的遊戲分鐘（跨午夜也正確）
+                const elapsed   = isInfinite ? 0 : (gameTime - buff.startedAt + 1440) % 1440;
+                const remaining = isInfinite ? null : Math.max(0, buff.duration - elapsed);
+                const pct       = isInfinite ? 100 : Math.min(100, (remaining / buff.duration) * 100);
+                return (
+                  <div style={{ marginBottom: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+                      <span style={{ fontSize: 11 }}>{buff.icon}</span>
+                      <span style={{ fontSize: 10, color: '#ffdd88' }}>{buff.name}</span>
+                      <span style={{ fontSize: 9, color: isInfinite ? '#aaffcc' : '#888', marginLeft: 'auto' }}>
+                        {isInfinite ? '永久' : `${remaining}分`}
+                      </span>
+                    </div>
+                    {!isInfinite && (
+                      <div style={{ height: 3, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{
+                          height: '100%', borderRadius: 2,
+                          width: `${pct}%`,
+                          background: pct > 40 ? '#ffcc44' : pct > 15 ? '#ff8844' : '#ff4444',
+                          transition: 'width 0.5s',
+                        }} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* 快捷按鈕列 */}
               <div style={{ display: 'flex', gap: 5 }}>
                 <button onClick={() => setShowInventory(true)} title="背包 [I]" style={{
@@ -1345,6 +1645,22 @@ export default function MazeFirstPerson() {
                     flex: 1, padding: '5px 0', borderRadius: 5, cursor: 'pointer', fontSize: 14,
                     background: 'rgba(60,60,100,0.4)', border: '1px solid rgba(100,100,180,0.4)', color: '#aaaaff',
                   }}>⛺</button>
+                )}
+                {gameMode === 'DUNGEON_INTERIOR' && (
+                  <button
+                    onClick={() => {
+                      const next = !cheatFullMap;
+                      setCheatFullMap(next);
+                      g.current.cheatFullMap = next;
+                    }}
+                    title="作弊：全開小地圖"
+                    style={{
+                      flex: 1, padding: '5px 0', borderRadius: 5, cursor: 'pointer', fontSize: 14,
+                      background: cheatFullMap ? 'rgba(200,160,0,0.5)' : 'rgba(80,60,0,0.4)',
+                      border: `1px solid ${cheatFullMap ? 'rgba(255,220,0,0.8)' : 'rgba(140,110,0,0.4)'}`,
+                      color: cheatFullMap ? '#ffe066' : '#998833',
+                    }}
+                  >🗺</button>
                 )}
               </div>
             </div>
@@ -1386,7 +1702,8 @@ export default function MazeFirstPerson() {
           <InventoryPanel
             player={playerRef.current}
             onClose={closeInventory}
-            onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
+            onPlayerUpdate={() => { applyLightBuff(); setPlayerStats({ ...playerRef.current }); }}
+            currentGameTime={gameTime}
           />
         )}
         {showStats && (
@@ -1403,6 +1720,12 @@ export default function MazeFirstPerson() {
             onClose={() => { setShowCampRest(false); g.current.uiPaused = false; }}
           />
         )}
+
+        {/* 事件通知 Toast */}
+        <ToastNotification
+          toasts={toasts}
+          onRemove={id => setToasts(prev => prev.filter(t => t.id !== id))}
+        />
 
         {/* 升等提示 */}
         {levelUpMsg && (
@@ -1423,13 +1746,15 @@ export default function MazeFirstPerson() {
             display: "flex", alignItems: "center", gap: 12, whiteSpace: "nowrap",
           }}>
             <span style={{ fontSize: 13, color: "var(--color-text-primary)" }}>
-              {transitionPrompt === 'fwd'
-                ? (g.current.gameMode === 'DUNGEON_INTERIOR'
-                    ? `前往第 ${g.current.currentMapIdx + 2} 層？`
-                    : `前往地圖 ${["B", "C"][g.current.currentMapIdx]}？`)
-                : (g.current.gameMode === 'DUNGEON_INTERIOR'
-                    ? (g.current.currentMapIdx <= 1 ? `返回地面？` : `返回第 ${g.current.currentMapIdx} 層？`)
-                    : `返回地圖 ${["A", "B"][g.current.currentMapIdx - 1]}？`)}
+              {transitionPrompt === 'gate'
+                ? '離開並返回大地圖？'
+                : transitionPrompt === 'fwd'
+                  ? (g.current.gameMode === 'DUNGEON_INTERIOR'
+                      ? `前往第 ${g.current.currentMapIdx + 2} 層？`
+                      : `前往地圖 ${["B", "C"][g.current.currentMapIdx]}？`)
+                  : (g.current.gameMode === 'DUNGEON_INTERIOR'
+                      ? (g.current.currentMapIdx <= 1 ? `返回地面？` : `返回第 ${g.current.currentMapIdx} 層？`)
+                      : `返回地圖 ${["A", "B"][g.current.currentMapIdx - 1]}？`)}
             </span>
             <button onClick={confirmTransition} style={{
               fontSize: 12, padding: "4px 14px", borderRadius: "var(--border-radius-md)",

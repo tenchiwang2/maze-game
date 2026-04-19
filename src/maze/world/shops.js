@@ -1,7 +1,7 @@
 export const SHOPS = {
   general_store: {
     name: '雜貨店',
-    inventory: ['health_potion', 'mp_potion'],
+    inventory: ['health_potion', 'mp_potion', 'torch'],
   },
   weapon_shop: {
     name: '武器鐵匠',
@@ -9,7 +9,7 @@ export const SHOPS = {
   },
   armor_shop: {
     name: '防具商人',
-    inventory: ['leather_armor'],
+    inventory: ['leather_armor', 'torch', 'lantern'],
   },
   royal_weapon: {
     name: '皇家武器庫',
@@ -17,6 +17,6 @@ export const SHOPS = {
   },
   royal_armor: {
     name: '皇家防具庫',
-    inventory: ['leather_armor'],
+    inventory: ['leather_armor', 'lantern'],
   },
 };

@@ -447,3 +447,51 @@ export function doorWorldPos(door) {
     return { wx: 2*door.c + 2,         wy: 2*(door.r + 1) + 0.5 };
   return   { wx: 2*(door.c + 1) + 0.5, wy: 2*door.r + 2 };
 }
+
+// ─────────────────────────────────────────────
+//  迷宮格分析輔助函式
+// ─────────────────────────────────────────────
+
+/**
+ * 找出迷宮中的「死路格」（四方向中只有一個開口的走廊格）
+ * 回傳 [{r, c}] 採迷宮格座標（非 grid 座標）
+ * 自動排除入口 (0,0) 與出口 (rows-1,cols-1)
+ */
+export function findDeadEnds(grid, rows, cols) {
+  const result = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      // 排除入口與出口
+      if ((r === 0 && c === 0) || (r === rows-1 && c === cols-1)) continue;
+      const gy = 2*r+1, gx = 2*c+1;
+      if (grid[gy]?.[gx] !== 0) continue;
+      let open = 0;
+      if (grid[gy-1]?.[gx] === 0) open++;
+      if (grid[gy+1]?.[gx] === 0) open++;
+      if (grid[gy]?.[gx-1] === 0) open++;
+      if (grid[gy]?.[gx+1] === 0) open++;
+      if (open === 1) result.push({ r, c });
+    }
+  }
+  return result;
+}
+
+/**
+ * 找出固定房間內部未被事件占用的格子
+ * 回傳 [{r, c}] 採迷宮格座標
+ */
+export function findFixedRoomFreeCells(rooms) {
+  const cells = [];
+  for (const rm of rooms) {
+    if (!rm.fixed) continue;
+    const usedInRoom = new Set((rm.events || []).map(ev => `${ev.dr},${ev.dc}`));
+    for (let dr = 0; dr < rm.h; dr++) {
+      for (let dc = 0; dc < rm.w; dc++) {
+        if (!usedInRoom.has(`${dr},${dc}`)) {
+          cells.push({ r: rm.r + dr, c: rm.c + dc });
+        }
+      }
+    }
+  }
+  return cells;
+}

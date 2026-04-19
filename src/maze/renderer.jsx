@@ -269,44 +269,96 @@ export function drawEventMarker(ctx, sx, dist, H, ev, t) {
 }
 
 // ─────────────────────────────────────────────
+//  敵人 billboard 繪製
+// ─────────────────────────────────────────────
+export function drawEnemy(ctx, sx, dist, H, enemy, t) {
+  if (dist < 0.3) return;
+  const h   = Math.min(H * 1.4, H / dist) * 0.72;
+  const top = (H - h) / 2 + h * 0.1;
+  const w   = h * 0.55;
+  const a   = Math.min(1, Math.max(0, 1 - dist / 14));
+  const bob = Math.sin(t * 0.13 + (enemy.bobOffset ?? 0)) * h * 0.03;
+
+  // 陰影橢圓
+  ctx.fillStyle = `rgba(0,0,0,${a * 0.4})`;
+  ctx.beginPath(); ctx.ellipse(sx, top + h + bob + 3, w * 0.3, h * 0.05, 0, 0, Math.PI * 2); ctx.fill();
+
+  // 身體
+  const hpR = (enemy.hp ?? enemy.maxHp) / (enemy.maxHp ?? 1);
+  ctx.fillStyle = hpR > 0.5 ? `rgba(220,55,55,${a * 0.92})` : `rgba(255,20,20,${a * 0.92})`;
+  ctx.beginPath(); ctx.roundRect?.(sx - w / 2, top + bob + h * 0.22, w, h * 0.52, 5); ctx.fill();
+
+  // 頭部
+  ctx.fillStyle = `rgba(235,90,70,${a * 0.9})`;
+  ctx.beginPath(); ctx.arc(sx, top + bob + h * 0.15, w * 0.27, 0, Math.PI * 2); ctx.fill();
+
+  // 近距離顯示 icon
+  if (dist < 8) {
+    const fa = a * Math.min(1, (8 - dist) / 5);
+    ctx.save();
+    ctx.globalAlpha = fa;
+    ctx.font = `${Math.max(10, h * 0.28) | 0}px serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(enemy.icon ?? '👹', sx, top + bob + h * 0.15);
+    ctx.restore();
+  }
+
+  // 血量條（極近才顯示）
+  if (dist < 5 && enemy.maxHp) {
+    const bw = Math.max(18, w * 0.9), bh = 3;
+    const bx = sx - bw / 2, by = top + bob - 8;
+    ctx.fillStyle = `rgba(60,0,0,${a * 0.8})`; ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = `rgba(255,50,50,${a * 0.9})`; ctx.fillRect(bx, by, bw * hpR, bh);
+  }
+}
+
+// ─────────────────────────────────────────────
 //  小地圖（未修改）
 // ─────────────────────────────────────────────
-export function drawMinimap(ctx, walls, cols, rows, px, py, angle, rooms, eCell, xCell, events, doors, torchBright = 1, grid = null, lightCfg = {}) {
+export function drawMinimap(ctx, walls, cols, rows, px, py, angle, rooms, eCell, xCell, events, doors, torchBright = 1, grid = null, lightCfg = {}, enemies = []) {
   const torchRadius = lightCfg.torchRadius ?? TORCH_RADIUS;
+  const fullMap     = lightCfg.fullMap     ?? false;
   const ox = 8, oy = 8, mW = cols * MM, mH = rows * MM;
   const gcx = ox + ((px - 1) / 2) * MM, gcy = oy + ((py - 1) / 2) * MM;
 
   // 背景框（不受能見遮罩影響）
   ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.beginPath(); ctx.roundRect(ox - 3, oy - 3, mW + 6, mH + 6, 4); ctx.fill();
 
-  // 能見範圍遮罩：光線追蹤可見多邊形（牆壁遮擋）
-  const visGridR = torchRadius * 0.8 * Math.max(0.5, torchBright); // grid 單位
-  const NUM_VIS_RAYS = 120;
   ctx.save();
-  ctx.beginPath();
-  if (grid) {
-    const gW = grid[0].length, gH = grid.length;
-    const step = 0.25; // grid 單位步長
-    let first = true;
-    for (let i = 0; i < NUM_VIS_RAYS; i++) {
-      const ra = (i / NUM_VIS_RAYS) * Math.PI * 2;
-      const cos = Math.cos(ra), sin = Math.sin(ra);
-      let hitX = px, hitY = py;
-      for (let d = step; d <= visGridR; d += step) {
-        const wx = px + cos * d, wy = py + sin * d;
-        const gx = Math.floor(wx), gy = Math.floor(wy);
-        if (gx < 0 || gx >= gW || gy < 0 || gy >= gH || grid[gy][gx] === 1) break;
-        hitX = wx; hitY = wy;
-      }
-      const cx = ox + ((hitX - 1) / 2) * MM, cy = oy + ((hitY - 1) / 2) * MM;
-      if (first) { ctx.moveTo(cx, cy); first = false; } else ctx.lineTo(cx, cy);
-    }
-    ctx.closePath();
+  if (fullMap) {
+    // 全圖模式：直接 clip 整個地圖範圍，不做視野遮罩
+    ctx.beginPath();
+    ctx.rect(ox - 1, oy - 1, mW + 2, mH + 2);
+    ctx.clip();
   } else {
-    // grid 未就緒時退回圓形
-    ctx.arc(gcx, gcy, torchRadius * 0.4 * MM * Math.max(0.5, torchBright), 0, Math.PI * 2);
+    // 能見範圍遮罩：光線追蹤可見多邊形（牆壁遮擋）
+    const visGridR = torchRadius * 0.8 * Math.max(0.5, torchBright); // grid 單位
+    const NUM_VIS_RAYS = 120;
+    ctx.beginPath();
+    if (grid) {
+      const gW = grid[0].length, gH = grid.length;
+      const step = 0.25; // grid 單位步長
+      let first = true;
+      for (let i = 0; i < NUM_VIS_RAYS; i++) {
+        const ra = (i / NUM_VIS_RAYS) * Math.PI * 2;
+        const cos = Math.cos(ra), sin = Math.sin(ra);
+        let hitX = px, hitY = py;
+        for (let d = step; d <= visGridR; d += step) {
+          const wx = px + cos * d, wy = py + sin * d;
+          const gx = Math.floor(wx), gy = Math.floor(wy);
+          if (gx < 0 || gx >= gW || gy < 0 || gy >= gH || grid[gy][gx] === 1) break;
+          hitX = wx; hitY = wy;
+        }
+        const cx = ox + ((hitX - 1) / 2) * MM, cy = oy + ((hitY - 1) / 2) * MM;
+        if (first) { ctx.moveTo(cx, cy); first = false; } else ctx.lineTo(cx, cy);
+      }
+      ctx.closePath();
+    } else {
+      // grid 未就緒時退回圓形
+      ctx.arc(gcx, gcy, torchRadius * 0.4 * MM * Math.max(0.5, torchBright), 0, Math.PI * 2);
+    }
+    ctx.clip();
   }
-  ctx.clip();
 
   // 地板底色
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) { ctx.fillStyle = "#1e1e1e"; ctx.fillRect(ox + c * MM, oy + r * MM, MM, MM); }
@@ -337,6 +389,16 @@ export function drawMinimap(ctx, walls, cols, rows, px, py, angle, rooms, eCell,
   ctx.fillStyle = "rgba(230,100,20,0.95)"; ctx.fillRect(ox + xCell.c * MM + 1, oy + xCell.r * MM + 1, MM - 2, MM - 2);
 
   ctx.restore(); // 解除能見遮罩
+
+  // 敵人（紅點）：僅在開啟 debug/全圖 或持有夜明珠時顯示
+  if (lightCfg.showEnemies) {
+    enemies.forEach(e => {
+      if (!e.alive) return;
+      const ex = ox + ((e.px - 1) / 2) * MM, ey = oy + ((e.py - 1) / 2) * MM;
+      ctx.fillStyle = 'rgba(255,60,60,0.92)';
+      ctx.beginPath(); ctx.arc(ex, ey, 2.5, 0, Math.PI * 2); ctx.fill();
+    });
+  }
 
   // 玩家（永遠可見）
   ctx.fillStyle = "#7F77DD"; ctx.beginPath(); ctx.arc(gcx, gcy, 3, 0, Math.PI * 2); ctx.fill();

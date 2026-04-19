@@ -39,6 +39,24 @@ export const ITEMS = {
     desc: '由鋼環連接而成，防護效果優良。',
   },
 
+  // ── 光源（消耗品） ────────────────────────────
+  torch: {
+    name: '火把', type: 'consumable', category: ITEM_CATEGORY.CONSUMABLE, icon: '🔥',
+    lightRadius: 16, lightAmbient: 0.06, lightDuration: 30, value: 15,
+    desc: '燃燒 30 分鐘，照明範圍擴大為平時的 2 倍。',
+  },
+  lantern: {
+    name: '提燈', type: 'consumable', category: ITEM_CATEGORY.CONSUMABLE, icon: '🏮',
+    lightRadius: 22, lightAmbient: 0.10, lightDuration: 120, value: 60,
+    desc: '穩定的油燈，照明範圍約 2.7 倍，持續 120 分鐘。',
+  },
+  night_pearl: {
+    name: '夜明珠', type: 'consumable', category: ITEM_CATEGORY.CONSUMABLE, icon: '💎',
+    lightRadius: 32, lightAmbient: 0.18, lightDuration: Infinity, value: 10000,
+    noConsume: true,
+    desc: '稀有寶珠，能將黑暗化為白晝，效果永久持續，且不會消耗。',
+  },
+
   // ── 消耗品 ────────────────────────────────────
   health_potion: {
     name: '恢復藥水', type: 'consumable', category: ITEM_CATEGORY.CONSUMABLE, icon: '🧪',

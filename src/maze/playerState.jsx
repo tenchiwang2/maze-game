@@ -17,6 +17,7 @@ export function createPlayer() {
     equipped: { weapon: null, armor: null },
     quests: [],             // [{ questId, stepIdx, completed, progress: {} }]
     killCounts: {},         // { enemyId: count }
+    lightBuff: null,        // { torchRadius, ambient, startedAt, duration, icon, name } 或 null
   };
 }
 
@@ -68,10 +69,15 @@ export function removeItem(player, itemId, qty = 1) {
 }
 
 // 使用消耗品，回傳效果說明 string[] 或 null（失敗）
-export function useItem(player, itemId) {
+export function useItem(player, itemId, currentGameTime = 0) {
   const item = ITEMS[itemId];
   if (!item || item.type !== 'consumable') return null;
-  if (!removeItem(player, itemId, 1)) return null;
+  if (item.noConsume) {
+    // 不消耗物品，但需確認背包中有此物品
+    if (!player.items.some(i => i.itemId === itemId && i.qty > 0)) return null;
+  } else {
+    if (!removeItem(player, itemId, 1)) return null;
+  }
 
   const msgs = [];
   if (item.heal) {
@@ -83,6 +89,21 @@ export function useItem(player, itemId) {
     const actual = Math.min(item.healMp, player.maxMp - player.mp);
     player.mp += actual;
     msgs.push(`MP 恢復 ${actual} 點（${player.mp}/${player.maxMp}）`);
+  }
+  if (item.lightRadius) {
+    const isInfinite = item.lightDuration === Infinity;
+    // 若已有光源 buff，取較強的
+    if (!player.lightBuff || item.lightRadius > player.lightBuff.torchRadius) {
+      player.lightBuff = {
+        torchRadius: item.lightRadius,
+        ambient:     item.lightAmbient ?? 0.06,
+        startedAt:   currentGameTime,          // 開始時間（遊戲分鐘）
+        duration:    item.lightDuration,       // 持續時間（Infinity = 永久）
+        icon:        item.icon,
+        name:        item.name,
+      };
+    }
+    msgs.push(`使用了 ${item.name}，照明增強${isInfinite ? '（永久）' : ` ${item.lightDuration} 分鐘`}`);
   }
   return msgs;
 }

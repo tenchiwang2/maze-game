@@ -23,7 +23,7 @@ const TABS = [
   { key: ITEM_CATEGORY.QUEST,      label: '任務',   color: '#ffd060' },
 ];
 
-export default function InventoryPanel({ player, onClose, onPlayerUpdate }) {
+export default function InventoryPanel({ player, onClose, onPlayerUpdate, currentGameTime = 0 }) {
   const [tab, setTab] = useState(ITEM_CATEGORY.CONSUMABLE);
   const [msg, setMsg] = useState('');
 
@@ -33,7 +33,7 @@ export default function InventoryPanel({ player, onClose, onPlayerUpdate }) {
   }
 
   function doUse(itemId) {
-    const msgs = useItem(player, itemId);
+    const msgs = useItem(player, itemId, currentGameTime);
     if (msgs) { setMsg(msgs.join('  ')); onPlayerUpdate(); }
     else setMsg('無法使用！');
   }
