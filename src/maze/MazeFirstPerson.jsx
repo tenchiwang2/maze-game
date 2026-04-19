@@ -19,6 +19,7 @@ import { NPC_DEFS } from './world/npcs.js';
 import { initNPCs, updateNPCs, getNearbyNPC, getHostileNPCsNear } from './npcSystem.js';
 import { createPlayer, addItem, addQuest, claimReward, checkQuestStep, gainExp, hasItem } from './playerState.jsx';
 import QuestOfferPanel from './QuestOfferPanel.jsx';
+import QuestLogPanel   from './QuestLogPanel.jsx';
 import { applyCombatResult } from './combatService.js';
 import { rollLoot } from './combatEngine.jsx';
 import { ITEMS } from './itemData.jsx';
@@ -530,6 +531,7 @@ export default function MazeFirstPerson() {
   const [nearbyNPC,  setNearbyNPC]            = useState(null); // 靠近的世界 NPC
   const [playerStats, setPlayerStats]         = useState(() => createPlayer()); // for re-render trigger
   const [questLog, setQuestLog]               = useState([]);
+  const [showQuestLog, setShowQuestLog]        = useState(false);
   const [activeQuestOffer, setActiveQuestOffer] = useState(null);
   // shape: { questId, mode:'offer'|'reward', playerQuest?, continueDialogue } | null
   const [levelUpMsg, setLevelUpMsg]           = useState('');
@@ -598,8 +600,13 @@ export default function MazeFirstPerson() {
     }
     if (ev.type === 'npc' && ev.dialogueId) {
       g.current.uiPaused = true;
-      setActiveDialogue(ev.dialogueId);
-      addToast({ type: 'npc', icon: '💬', title: ev.text || 'NPC', body: '按下對話繼續', duration: 1800 });
+      // 優先檢查：是否有完成但未領獎的任務可向此 NPC 交差
+      if (tryClaimQuest(ev.dialogueId)) {
+        addToast({ type: 'quest', icon: '📬', title: `任務交差：${ev.text || 'NPC'}`, duration: 1800 });
+      } else {
+        setActiveDialogue(ev.dialogueId);
+        addToast({ type: 'npc', icon: '💬', title: ev.text || 'NPC', body: '按下對話繼續', duration: 1800 });
+      }
     }
     if (ev.type === 'shop' && ev.shopId) {
       g.current.uiPaused = true;
@@ -1126,6 +1133,14 @@ export default function MazeFirstPerson() {
         setShowStats(true);
       }
 
+      // Q 鍵開啟任務日誌
+      if ((s.keys['KeyQ'] || s.keys['q']) && s.interactCooldown === 0) {
+        s.keys['KeyQ'] = false; s.keys['q'] = false;
+        s.interactCooldown = 30;
+        s.uiPaused = true;
+        setShowQuestLog(true);
+      }
+
       const mr = Math.round((s.py - 1) / 2), mc = Math.round((s.px - 1) / 2);
       eventsRef.current.forEach((ev, i) => {
         if (ev.triggered && !ev.repeatable) return;
@@ -1530,7 +1545,8 @@ export default function MazeFirstPerson() {
   }
 
   // ── UI 面板關閉回呼 ──
-  function closeDialogue()  { setActiveDialogue(null); g.current.uiPaused = false; g.current.interactCooldown = 60; advanceGameTime(TIME_DIALOGUE); }
+  function closeDialogue()   { setActiveDialogue(null);   g.current.uiPaused = false; g.current.interactCooldown = 60; advanceGameTime(TIME_DIALOGUE); }
+  function closeQuestLog()   { setShowQuestLog(false);    g.current.uiPaused = false; g.current.interactCooldown = 30; }
   function closeShop()      { setActiveShop(null);     g.current.uiPaused = false; g.current.interactCooldown = 60; advanceGameTime(TIME_SHOP); }
   function closeInventory() { setShowInventory(false); g.current.uiPaused = false; g.current.interactCooldown = 30; }
   function closeStats()     { setShowStats(false);     g.current.uiPaused = false; g.current.interactCooldown = 30; }
@@ -1790,6 +1806,20 @@ export default function MazeFirstPerson() {
                   flex: 1, padding: '5px 0', borderRadius: 5, cursor: 'pointer', fontSize: 14,
                   background: 'rgba(40,80,160,0.4)', border: '1px solid rgba(80,140,255,0.4)', color: '#88ccff',
                 }}>📊</button>
+                <button
+                  onClick={() => { setShowQuestLog(true); g.current.uiPaused = true; }}
+                  title="任務日誌 [Q]"
+                  style={{
+                    flex: 1, padding: '5px 0', borderRadius: 5, cursor: 'pointer', fontSize: 14,
+                    background: questLog.some(q => q.completed && !q.claimed)
+                      ? 'rgba(160,120,20,0.45)'
+                      : 'rgba(100,70,20,0.35)',
+                    border: questLog.some(q => q.completed && !q.claimed)
+                      ? '1px solid rgba(220,170,40,0.7)'
+                      : '1px solid rgba(180,130,40,0.4)',
+                    color: questLog.some(q => q.completed && !q.claimed) ? '#f0c040' : '#c09840',
+                  }}
+                >📜</button>
                 {gameMode === 'OVERWORLD' && (
                   <button onClick={doCampRest} title="扎營休息" style={{
                     flex: 1, padding: '5px 0', borderRadius: 5, cursor: 'pointer', fontSize: 14,
@@ -2179,6 +2209,15 @@ export default function MazeFirstPerson() {
       {mazeData && <MazeDataPanel data={mazeData} walls={g.current.walls} />}
 
       </>)}
+
+      {/* ── 任務日誌面板 ── */}
+      {showQuestLog && (
+        <QuestLogPanel
+          questLog={questLog}
+          questDefs={QUEST_DEFS}
+          onClose={closeQuestLog}
+        />
+      )}
 
       {/* ── 任務接取 / 領獎彈窗（全螢幕覆蓋）── */}
       {activeQuestOffer && (() => {
