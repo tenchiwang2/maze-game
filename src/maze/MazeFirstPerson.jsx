@@ -917,12 +917,11 @@ export default function MazeFirstPerson() {
     s.dungeonEnemies = s.dungeonEnemies.filter(e => e.alive);
   }
 
-  // ── 世界 NPC 更新 + 互動偵測 ──
-  function updateWorldNPCs() {
+  // ── 世界 NPC 每幀偵測（靠近 + 敵對自動戰鬥）──
+  // ★ 只做偵測，不移動 NPC；每幀都要呼叫
+  function detectWorldNPCs() {
     const s = g.current;
-    if (!s.worldNPCs?.length || !worldTerrainRef.current) return;
-
-    updateNPCs(s.worldNPCs, worldTerrainRef.current, worldLocationsRef.current, s.gameTime);
+    if (!s.worldNPCs?.length) return;
 
     // 偵測靠近的 NPC（取最近的）
     const near = getNearbyNPC(s.worldNPCs, s.wx, s.wy, 1.8);
@@ -936,7 +935,7 @@ export default function MazeFirstPerson() {
       const hostiles = getHostileNPCsNear(s.worldNPCs, s.wx, s.wy, 1.0);
       if (hostiles.length > 0) {
         const h = hostiles[0];
-        // 從 NPC 陣列中標記為已觸發（避免重複）
+        // 從陣列中移除，避免重複觸發
         const idx = s.worldNPCs.indexOf(h);
         if (idx >= 0) s.worldNPCs.splice(idx, 1);
         s.uiPaused = true;
@@ -979,6 +978,16 @@ export default function MazeFirstPerson() {
             s.gameTime = advanceTime(s.gameTime, minsGained);
             setGameTime(s.gameTime);
             tickLightBuff();
+            // ★ NPC 移動只在時間推進時執行（玩家移動才觸發）
+            if (s.worldNPCs?.length && worldTerrainRef.current) {
+              updateNPCs(
+                s.worldNPCs,
+                worldTerrainRef.current,
+                worldLocationsRef.current,
+                s.gameTime,
+                minsGained,
+              );
+            }
           }
         }
 
@@ -1018,8 +1027,8 @@ export default function MazeFirstPerson() {
           }
         }
 
-        // NPC 移動 AI + 戰鬥偵測
-        updateWorldNPCs();
+        // NPC 靠近偵測 + 敵對戰鬥觸發（每幀）
+        detectWorldNPCs();
       }
 
       drawOverworld(ctx, W, H, terrain, worldLocationsRef.current, s.wx, s.wy, nearbyLocRef.current, s.worldNPCs, getNearbyNPC(s.worldNPCs, s.wx, s.wy, 1.8));
