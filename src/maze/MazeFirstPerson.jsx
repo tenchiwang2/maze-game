@@ -1081,8 +1081,10 @@ export default function MazeFirstPerson() {
         }
       }
 
-      const onExitPortal  = Math.floor(s.px) === s.exitGX  && Math.floor(s.py) === s.exitGY;
-      const onEntryPortal = Math.floor(s.px) === s.entryGX && Math.floor(s.py) === s.entryGY
+      // 距離判定（中心 = portal座標 + 0.5），半徑 1.0 格都算「踩上」
+      const PORTAL_RADIUS = 1.0;
+      const onExitPortal  = Math.hypot(s.px - (s.exitGX  + 0.5), s.py - (s.exitGY  + 0.5)) < PORTAL_RADIUS;
+      const onEntryPortal = Math.hypot(s.px - (s.entryGX + 0.5), s.py - (s.entryGY + 0.5)) < PORTAL_RADIUS
         && (s.multiMap ? s.currentMapIdx > 0 : s.gameMode === 'DUNGEON_INTERIOR');
 
       // 玩家離開傳送門後才能再觸發詢問
