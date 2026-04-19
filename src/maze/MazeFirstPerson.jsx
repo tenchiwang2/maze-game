@@ -15,6 +15,8 @@ import { isPassable, findWorldSpawn, getNearbyLocation, LOC_TYPE } from './world
 import { WORLD_DEF, DIALOGUES, SHOPS, QUEST_DEFS } from './worldData.jsx';
 import { WORLD_FACTORIES, WORLD_FACTORY_IDS } from './worldFactory.jsx';
 import { drawOverworld } from './OverworldRenderer.jsx';
+import { NPC_DEFS } from './world/npcs.js';
+import { initNPCs, updateNPCs, getNearbyNPC, getHostileNPCsNear } from './npcSystem.js';
 import { createPlayer, addItem, checkQuestStep, hasItem } from './playerState.jsx';
 import { applyCombatResult } from './combatService.js';
 import { rollLoot } from './combatEngine.jsx';
@@ -524,6 +526,7 @@ export default function MazeFirstPerson() {
   const [cheatFullMap,  setCheatFullMap]      = useState(false);
   const [toasts,        setToasts]            = useState([]);
   const [activePort, setActivePort]           = useState(null); // 港口旅行面板
+  const [nearbyNPC,  setNearbyNPC]            = useState(null); // 靠近的世界 NPC
   const [playerStats, setPlayerStats]         = useState(() => createPlayer()); // for re-render trigger
   const [questLog, setQuestLog]               = useState([]);
   const [levelUpMsg, setLevelUpMsg]           = useState('');
@@ -561,6 +564,8 @@ export default function MazeFirstPerson() {
     gameTime: TIME_START,  // 分鐘，game loop 用
     timeAccum: 0,          // 移動距離累積器
     dungeonEnemies: [],    // 遊走敵人實體陣列
+    worldNPCs: [],         // 世界 NPC 實體陣列
+    nearbyNPCId: null,     // 目前靠近的 NPC id
   });
   const renderRef = useRef(null);
   const eventsRef = useRef(events);
@@ -666,6 +671,8 @@ export default function MazeFirstPerson() {
     g.current.returnWX = spawn.wx; g.current.returnWY = spawn.wy;
     nearbyLocRef.current = null;
     setNearbyLocation(null);
+    // 初始化世界 NPC
+    g.current.worldNPCs = initNPCs(NPC_DEFS, sanitized, terrain);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 港口海上旅行 ──────────────────────────
@@ -910,6 +917,36 @@ export default function MazeFirstPerson() {
     s.dungeonEnemies = s.dungeonEnemies.filter(e => e.alive);
   }
 
+  // ── 世界 NPC 更新 + 互動偵測 ──
+  function updateWorldNPCs() {
+    const s = g.current;
+    if (!s.worldNPCs?.length || !worldTerrainRef.current) return;
+
+    updateNPCs(s.worldNPCs, worldTerrainRef.current, worldLocationsRef.current, s.gameTime);
+
+    // 偵測靠近的 NPC（取最近的）
+    const near = getNearbyNPC(s.worldNPCs, s.wx, s.wy, 1.8);
+    if (near?.id !== s.nearbyNPCId) {
+      s.nearbyNPCId = near?.id ?? null;
+      setNearbyNPC(near ?? null);
+    }
+
+    // 敵對 NPC 自動觸發戰鬥
+    if (!s.uiPaused && s.interactCooldown === 0) {
+      const hostiles = getHostileNPCsNear(s.worldNPCs, s.wx, s.wy, 1.0);
+      if (hostiles.length > 0) {
+        const h = hostiles[0];
+        // 從 NPC 陣列中標記為已觸發（避免重複）
+        const idx = s.worldNPCs.indexOf(h);
+        if (idx >= 0) s.worldNPCs.splice(idx, 1);
+        s.uiPaused = true;
+        s.interactCooldown = 80;
+        emit('combat:start', { enemyId: h.enemyId });
+        addToast({ type: 'combat', icon: '⚔️', title: `遭遇 ${h.name}！`, duration: 1800 });
+      }
+    }
+  }
+
   renderRef.current = () => {
     const canvas = canvasRef.current; if (!canvas) return;
     const s = g.current;
@@ -952,17 +989,40 @@ export default function MazeFirstPerson() {
           setNearbyLocation(near);
         }
 
-        // E 鍵進入地點
-        if ((s.keys['KeyE'] || s.keys['e']) && s.interactCooldown === 0 && near) {
-          s.interactCooldown = 40;
+        // E 鍵：優先進入地點，其次對話 NPC
+        if ((s.keys['KeyE'] || s.keys['e']) && s.interactCooldown === 0) {
           s.keys['KeyE'] = false; s.keys['e'] = false;
-          doEnterLocation(near);
-          s.animId = requestAnimationFrame(() => renderRef.current?.());
-          return;
+          if (near) {
+            s.interactCooldown = 40;
+            doEnterLocation(near);
+            s.animId = requestAnimationFrame(() => renderRef.current?.());
+            return;
+          }
+          // 靠近的 NPC 互動
+          const nearNPC = getNearbyNPC(s.worldNPCs, s.wx, s.wy, 1.8);
+          if (nearNPC) {
+            s.interactCooldown = 40;
+            if (nearNPC.alignment === 'hostile' && nearNPC.enemyId) {
+              // 敵對 NPC → 戰鬥
+              const idx = s.worldNPCs.indexOf(nearNPC);
+              if (idx >= 0) s.worldNPCs.splice(idx, 1);
+              s.uiPaused = true;
+              emit('combat:start', { enemyId: nearNPC.enemyId });
+              addToast({ type: 'combat', icon: '⚔️', title: `挑戰 ${nearNPC.name}！`, duration: 1800 });
+            } else if (nearNPC.dialogueId) {
+              // 友善/中立 NPC → 對話
+              s.uiPaused = true;
+              setActiveDialogue(nearNPC.dialogueId);
+              addToast({ type: 'npc', icon: nearNPC.icon, title: nearNPC.name, duration: 1500 });
+            }
+          }
         }
+
+        // NPC 移動 AI + 戰鬥偵測
+        updateWorldNPCs();
       }
 
-      drawOverworld(ctx, W, H, terrain, worldLocationsRef.current, s.wx, s.wy, nearbyLocRef.current);
+      drawOverworld(ctx, W, H, terrain, worldLocationsRef.current, s.wx, s.wy, nearbyLocRef.current, s.worldNPCs, getNearbyNPC(s.worldNPCs, s.wx, s.wy, 1.8));
       s.animId = requestAnimationFrame(() => renderRef.current?.());
       return;
     }

@@ -82,4 +82,164 @@ export const DIALOGUES = {
       { text: '了解了。', next: null },
     ]},
   ],
+
+  // ── 世界 NPC 對話 ────────────────────────────
+
+  npc_knight_ys: [
+    { speaker: '皇家騎士', text: '守護亞薩王國是騎士的榮耀，旅人請小心前行。' },
+    { speaker: '皇家騎士', text: '王都以東的山脈近來有哥布林出沒，獨行要特別留意。', choices: [
+      { text: '多謝告知。', next: null },
+    ]},
+  ],
+  npc_scholar_ys: [
+    { speaker: '王室學者', text: '古代神殿的文獻記載著三百年前的大災變，那段歷史至今仍是謎。' },
+    { speaker: '王室學者', text: '傳說夜明珠是那個時代留下的神器，據說封存在火山深處……', choices: [
+      { text: '有意思。', next: null },
+    ]},
+  ],
+  npc_guard_ys: [
+    { speaker: '衛兵', text: '旅人，此城受亞薩王國保護，請勿惹事生非。' },
+    { speaker: '衛兵', text: '如有危險可向任何衛兵求助，我們 24 小時巡邏。', choices: [
+      { text: '明白了。', next: null },
+    ]},
+  ],
+  npc_corrupt_noble: [
+    { speaker: '腐敗貴族', text: '哦，外地來的旅人？有什麼……需要辦的事嗎？' },
+    { speaker: '腐敗貴族', text: '本人在朝中頗有人脈，只要你出得起價錢，什麼情報都能取得。', choices: [
+      { text: '不了，謝謝。', next: null },
+      { text: '我有興趣……', next: null },
+    ]},
+  ],
+  npc_assassin: [
+    { speaker: '影刃', text: '……你是在找我嗎？' },
+    { speaker: '影刃', text: '我接受委託，不問原因，不留痕跡。需要的話，你知道怎麼聯繫。', choices: [
+      { text: '我只是路過。', next: null },
+    ]},
+  ],
+  npc_informant: [
+    { speaker: '諾斯', text: '噓——聲音小一點！' },
+    { speaker: '諾斯', text: '我手上有些消息……不過情報可不免費。付 50 金幣？', choices: [
+      { text: '好的。', next: null },
+      { text: '沒興趣。', next: null },
+    ]},
+  ],
+  npc_rebel: [
+    { speaker: '叛軍首領', text: '現在的王室已經腐化了。稅收越來越重，平民卻一無所有。' },
+    { speaker: '叛軍首領', text: '如果你也看不下去，可以加入我們，一起改變這個王國。', choices: [
+      { text: '我會考慮的。', next: null },
+      { text: '這不是我的事。', next: null },
+    ]},
+  ],
+  npc_forger: [
+    { speaker: '鐵嘴', text: '嘿，你需要通行證？貴族令牌？……我都能做。' },
+    { speaker: '鐵嘴', text: '品質保證，看起來跟真的一樣，但……千萬別被王室的學者檢查。', choices: [
+      { text: '聽起來違法。', next: null },
+    ]},
+  ],
+  npc_captain: [
+    { speaker: '船長', text: '歡迎來到港口！出海的話要看風向，最近北風強，小心行船。' },
+    { speaker: '船長', text: '需要搭船的話，可以跟我談談。只要價錢合適，哪裡都去。', choices: [
+      { text: '知道了，謝謝。', next: null },
+    ]},
+  ],
+  npc_fisherman: [
+    { speaker: '漁夫', text: '今天收穫不錯！海裡的魚最近很多，也許是天氣的關係。' },
+    { speaker: '漁夫', text: '這條大魚送你，補補體力！', choices: [
+      { text: '謝謝大哥！', next: null },
+    ]},
+  ],
+  npc_guard_desert: [
+    { speaker: '帝國衛兵', text: '外來者，帝國歡迎有能力的冒險者，但也不容忍挑釁。' },
+    { speaker: '帝國衛兵', text: '火山地帶有管制，沒有蘇丹的許可不得進入。', choices: [
+      { text: '明白了。', next: null },
+    ]},
+  ],
+  npc_spy: [
+    { speaker: '密探', text: '……你在看什麼？' },
+    { speaker: '密探', text: '我只是個普通旅人，別多問了。', choices: [
+      { text: '好吧……', next: null },
+    ]},
+  ],
+  npc_caravan: [
+    { speaker: '商隊長', text: '啊，旅人！要買點沙漠特產嗎？駱駝奶、香料、珍貴礦石都有！' },
+    { speaker: '商隊長', text: '不過沙漠路上盜匪猖獗，有時候要繞遠路才安全。', choices: [
+      { text: '一路順風！', next: null },
+    ]},
+  ],
+  npc_shaman: [
+    { speaker: '沙漠祭司', text: '沙漠之神告訴我，你是一個命運特殊的旅人。' },
+    { speaker: '沙漠祭司', text: '火山的深處封印著古老的力量……只有心懷勇氣的人才能觸碰。', choices: [
+      { text: '感謝指引。', next: null },
+    ]},
+  ],
+  npc_cult_priest: [
+    { speaker: '邪教祭司', text: '哈哈……旅人，你感受到了嗎？地底的脈動？' },
+    { speaker: '邪教祭司', text: '火山的熔岩是古神的血液，祂們即將復甦……你想成為見證者嗎？', choices: [
+      { text: '不，我要離開了。', next: null },
+      { text: '告訴我更多……', next: null },
+    ]},
+  ],
+  npc_bounty_hunter: [
+    { speaker: '賞金獵人', text: '我追緝各地的通緝犯，沒有什麼人是找不到的。' },
+    { speaker: '賞金獵人', text: '如果你有冒犯過任何國家的法律……最好離我遠一點。', choices: [
+      { text: '我沒犯法。', next: null },
+    ]},
+  ],
+  npc_guard_snow: [
+    { speaker: '聯盟衛兵', text: '北地嚴寒，外來者要準備好厚實的裝備。' },
+    { speaker: '聯盟衛兵', text: '聯盟的土地雖然冷，但民心溫暖。尊重我們的規矩，你會受到歡迎。', choices: [
+      { text: '謝謝提醒。', next: null },
+    ]},
+  ],
+  npc_ice_mage: [
+    { speaker: '冰法師', text: '這片大地蘊含著上古冰魔法的殘留，只有雪域的人能感受到。' },
+    { speaker: '冰法師', text: '若你找到冰晶礦石，帶來給我，我可以幫你淬煉成強力魔法武器。', choices: [
+      { text: '我會留意的。', next: null },
+    ]},
+  ],
+  npc_hunter_snow: [
+    { speaker: '獵人', text: '這片雪地是我的獵場，我追蹤過狼群、雪熊，甚至是更危險的東西。' },
+    { speaker: '獵人', text: '冰海盜最近在北岸很活躍，要去港口的話記得帶好武器。', choices: [
+      { text: '謝謝提示。', next: null },
+    ]},
+  ],
+  npc_betrayer: [
+    { speaker: '背叛者', text: '……你不是聯盟的人。好，那我可以說幾句。' },
+    { speaker: '背叛者', text: '酋長伯恩在隱瞞什麼，聯盟的北方領土有秘密……但我說太多就危險了。', choices: [
+      { text: '繼續說……', next: null },
+      { text: '我不想知道。', next: null },
+    ]},
+  ],
+  npc_snow_witch: [
+    { speaker: '冰雪女巫', text: '旅人……我嗅到了你身上命運的氣息。' },
+    { speaker: '冰雪女巫', text: '帶來三樣東西：月光下的冰晶、熔岩蜥蜴的鱗片、骷髏的碎骨，我為你預言未來。', choices: [
+      { text: '我考慮看看。', next: null },
+    ]},
+  ],
+  npc_adventurer: [
+    { speaker: '冒險家', text: '你好，同行！這個世界到處都是寶藏和危險，每天都很刺激！' },
+    { speaker: '冒險家', text: '聽說火山洞窟深處有一顆夜明珠，能驅散所有黑暗……不知道是不是真的。', choices: [
+      { text: '一起加油！', next: null },
+    ]},
+  ],
+  npc_adventurer_old: [
+    { speaker: '老冒險家', text: '年輕人，我走過三個國家，打過數百場戰鬥，活下來靠的不是力氣，是謹慎。' },
+    { speaker: '老冒險家', text: '遇到打不過的就跑，跑得掉才有機會變強。別為了面子丟命。', choices: [
+      { text: '受教了。', next: null },
+    ]},
+  ],
+  npc_black_market: [
+    { speaker: '暗影', text: '（壓低聲音）……你來對地方了。我賣的東西，正規商店沒有。' },
+    { speaker: '暗影', text: '不問出處，不給收據，現金交易，懂嗎？', choices: [
+      { text: '讓我看看有什麼。', next: null },
+      { text: '不了，謝謝。', next: null },
+    ]},
+  ],
+  npc_mysterious: [
+    { speaker: '神秘旅人', text: '……' },
+    { speaker: '神秘旅人', text: '你在尋找什麼？力量？財富？還是……真相？', choices: [
+      { text: '你是誰？', next: null },
+      { text: '（沉默地離開）', next: null },
+    ]},
+  ],
 };

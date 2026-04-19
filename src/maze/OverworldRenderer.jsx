@@ -73,7 +73,9 @@ const NATION_COLORS = {
 // ─────────────────────────────────────────────
 //  主繪製函式
 // ─────────────────────────────────────────────
-export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc) {
+import { PROFESSIONS } from './world/npcs.js';
+
+export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc, npcs = [], nearbyNPC = null) {
   const TS   = WORLD_TILE_SIZE;
   const cols = terrain[0].length;
   const rows = terrain.length;
@@ -210,7 +212,57 @@ export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc) 
     ctx.shadowBlur = 0;
   }
 
-  // ── 3. 玩家（黃色圓點）──────────────────────
+  // ── 3. NPC ──────────────────────────────────
+  for (const npc of npcs) {
+    const sx = npc.wx * TS - camX;
+    const sy = npc.wy * TS - camY;
+    if (sx < -24 || sx > W + 24 || sy < -24 || sy > H + 24) continue;
+
+    const prof    = PROFESSIONS[npc.profession] ?? { color: '#aaa', label: '?' };
+    const isNear  = nearbyNPC?.id === npc.id;
+    const distToPlayer = Math.hypot(npc.wx - wx, npc.wy - wy);
+
+    // 外光暈（靠近時或敵對時）
+    if (isNear || npc.alignment === 'hostile') {
+      ctx.fillStyle = npc.alignment === 'hostile'
+        ? 'rgba(255,60,60,0.25)'
+        : 'rgba(255,255,180,0.30)';
+      ctx.beginPath(); ctx.arc(sx, sy, 10, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // NPC 點
+    ctx.fillStyle = prof.color;
+    ctx.beginPath(); ctx.arc(sx, sy, isNear ? 5 : 4, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = npc.alignment === 'hostile' ? '#ff4444' : (isNear ? '#fff' : 'rgba(0,0,0,0.5)');
+    ctx.lineWidth = isNear ? 1.5 : 1;
+    ctx.stroke();
+
+    // icon（近距離才顯示）
+    if (distToPlayer < 8) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, (8 - distToPlayer) / 4);
+      ctx.font = `${TS * 0.7 | 0}px serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillText(npc.icon, sx, sy - 3);
+      ctx.restore();
+    }
+
+    // 名稱 + 職業標籤（靠近或 isNear 才顯示）
+    if (isNear || distToPlayer < 4) {
+      ctx.save();
+      ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+      ctx.fillStyle = isNear ? '#fff' : prof.color;
+      ctx.font = `bold ${isNear ? 11 : 9}px monospace`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.fillText(npc.name, sx, sy + 7);
+      ctx.fillStyle = 'rgba(200,200,200,0.85)';
+      ctx.font = '8px monospace';
+      ctx.fillText(`[${prof.label}]`, sx, sy + 19);
+      ctx.shadowBlur = 0; ctx.restore();
+    }
+  }
+
+  // ── 4. 玩家（黃色圓點）──────────────────────
   const px = wx * TS - camX;
   const py = wy * TS - camY;
 
@@ -222,7 +274,7 @@ export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc) 
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // ── 4. 靠近地點 HUD ─────────────────────────
+  // ── 5. 靠近地點 HUD ─────────────────────────
   if (nearbyLoc) {
     const isCapital = nearbyLoc.type === LOC_TYPE.CAPITAL;
     const isPort    = nearbyLoc.type === LOC_TYPE.PORT;
@@ -246,10 +298,31 @@ export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc) 
     }
   }
 
-  // ── 5. 圖例 ──────────────────────────────────
+  // ── 6. NPC 互動 HUD ─────────────────────────
+  if (nearbyNPC && !nearbyLoc) {
+    const prof = PROFESSIONS[nearbyNPC.profession] ?? { label: '?', color: '#aaa' };
+    const isHostile = nearbyNPC.alignment === 'hostile';
+    const verb = isHostile ? '迎戰' : '對話';
+    const txt  = `[E] ${verb} ${nearbyNPC.name}`;
+    const tw   = Math.max(200, txt.length * 9 + 28);
+    ctx.fillStyle = 'rgba(0,0,0,0.80)';
+    ctx.beginPath(); ctx.roundRect(W / 2 - tw / 2, H - 58, tw, 42, 6); ctx.fill();
+    ctx.strokeStyle = isHostile ? 'rgba(255,80,80,0.9)' : 'rgba(200,200,100,0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = isHostile ? '#ff8888' : prof.color;
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, W / 2, H - 42);
+    ctx.fillStyle = 'rgba(180,180,180,0.8)';
+    ctx.font = '10px monospace';
+    ctx.fillText(`${nearbyNPC.icon}  ${prof.label}`, W / 2, H - 26);
+  }
+
+  // ── 7. 圖例 ──────────────────────────────────
   drawLegend(ctx, W, H);
 
-  // ── 6. 標題 HUD ──────────────────────────────
+  // ── 8. 標題 HUD ──────────────────────────────
   ctx.fillStyle = 'rgba(0,0,0,0.60)';
   ctx.beginPath(); ctx.roundRect(8, 8, 116, 22, 4); ctx.fill();
   ctx.fillStyle = '#b0c8ff';
