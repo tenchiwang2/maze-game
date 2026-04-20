@@ -59,7 +59,7 @@ function RewardRow({ reward }) {
 
 // 將分鐘數轉為「X天X時」可讀字串
 function formatMins(mins) {
-  if (mins <= 0) return '已超時';
+  if (!Number.isFinite(mins) || mins <= 0) return '已超時';
   const d = Math.floor(mins / 1440);
   const h = Math.floor((mins % 1440) / 60);
   const m = mins % 60;
@@ -149,9 +149,8 @@ export default function QuestLogPanel({ questLog, questDefs, totalGameMins = 0, 
             {inProgress.map(q => {
               const def = questDefs.find(d => d.id === q.questId);
               if (!def) return null;
-              const remaining = def.timeLimitMins
-                ? def.timeLimitMins - (totalGameMins - q.acceptedAt)
-                : null;
+              const elapsed   = Number.isFinite(q.acceptedAt) ? totalGameMins - q.acceptedAt : 0;
+              const remaining = def.timeLimitMins ? def.timeLimitMins - elapsed : null;
               const urgent = remaining !== null && remaining < 1440; // 少於 1 天顯示警示
               return (
                 <div key={q.questId} onClick={() => setSelected(q.questId)}
@@ -229,7 +228,8 @@ export default function QuestLogPanel({ questLog, questDefs, totalGameMins = 0, 
                     </div>
                   )}
                   {!selectedQ.completed && !selectedQ.failed && selectedDef.timeLimitMins && (() => {
-                    const remaining = selectedDef.timeLimitMins - (totalGameMins - selectedQ.acceptedAt);
+                    const elapsed   = Number.isFinite(selectedQ.acceptedAt) ? totalGameMins - selectedQ.acceptedAt : 0;
+                    const remaining = selectedDef.timeLimitMins - elapsed;
                     const urgent = remaining < 1440;
                     return (
                       <div style={{
@@ -256,9 +256,15 @@ export default function QuestLogPanel({ questLog, questDefs, totalGameMins = 0, 
                     目標
                   </div>
                   {selectedDef.steps.map((step, i) => {
-                    const st = STEP_STATUS[stepStatus(selectedQ, i)];
-                    const isKillCurrent = step.type === 'kill' && i === selectedQ.stepIdx && !selectedQ.completed;
-                    const killed = isKillCurrent ? (selectedQ.progress?.[i] ?? 0) : null;
+                    const status = stepStatus(selectedQ, i);
+                    const st = STEP_STATUS[status];
+                    // kill 步驟：所有狀態都顯示進度計數
+                    const isKill = step.type === 'kill';
+                    const killProgress = isKill ? (selectedQ.progress?.[i] ?? 0) : null;
+                    const killDone     = isKill && status === 'done';
+                    const killCount    = isKill
+                      ? (killDone ? step.count : killProgress)
+                      : null;
                     return (
                       <div key={i} style={{
                         display: 'flex', gap: 8, fontSize: 13,
@@ -268,9 +274,12 @@ export default function QuestLogPanel({ questLog, questDefs, totalGameMins = 0, 
                       }}>
                         <span style={{ flexShrink: 0, width: 14, textAlign: 'center' }}>{st.icon}</span>
                         <span style={{ flex: 1 }}>{step.desc}</span>
-                        {isKillCurrent && (
-                          <span style={{ color: '#f0c040', flexShrink: 0 }}>
-                            {killed}/{step.count}
+                        {isKill && (
+                          <span style={{
+                            color: killDone ? '#60cc80' : '#f0c040',
+                            flexShrink: 0, fontVariantNumeric: 'tabular-nums',
+                          }}>
+                            {killCount}/{step.count}
                           </span>
                         )}
                       </div>

@@ -758,21 +758,25 @@ export default function MazeFirstPerson() {
 
   // ── 任務地城：依 enemyId + 數量建立地城 config ──
   function buildQuestDungeonCfg(enemyId, killCount) {
-    const mobId  = (enemyId === 'goblin') ? 'skeleton' : 'goblin';
-    const targets = Array.from({ length: killCount + 1 }, (_, i) => ({
+    const mobId = (enemyId === 'goblin') ? 'skeleton' : 'goblin';
+    // 7×7 迷宮（grid 15×15）通常有 12–18 個死路，足以放下所有事件
+    // 目標敵人數量 = killCount * 2，確保重複進入也夠殺
+    const targets = Array.from({ length: killCount * 2 }, (_, i) => ({
       id: `qd_t${i}`, type: 'combat',
       text: ENEMIES[enemyId]?.name ?? '怪物',
-      icon: '!', repeatable: true, triggered: false, enemyId,
+      icon: '!', repeatable: false, triggered: false, enemyId,
     }));
     return {
-      cols: 5, rows: 5,
-      randomCount: 2, doorCount: 1, doorOpen: true,
-      ambient: 0.08, torchRadius: 5,
+      cols: 7, rows: 7,
+      randomCount: 3, doorCount: 2, doorOpen: true,
+      ambient: 0.08, torchRadius: 6,
       globalEvents: [
         ...targets,
         { id: 'qd_m0', type: 'combat', text: ENEMIES[mobId]?.name ?? '洞穴守衛', icon: '!', repeatable: false, triggered: false, enemyId: mobId },
         { id: 'qd_m1', type: 'combat', text: ENEMIES[mobId]?.name ?? '洞穴守衛', icon: '!', repeatable: false, triggered: false, enemyId: mobId },
-        { id: 'qd_chest', type: 'chest', text: '遺落寶箱', icon: '📦', repeatable: false, triggered: false, itemId: 'health_potion', qty: 2 },
+        { id: 'qd_m2', type: 'combat', text: ENEMIES[mobId]?.name ?? '洞穴守衛', icon: '!', repeatable: false, triggered: false, enemyId: mobId },
+        { id: 'qd_chest0', type: 'chest', text: '遺落寶箱', icon: '📦', repeatable: false, triggered: false, itemId: 'health_potion', qty: 2 },
+        { id: 'qd_chest1', type: 'chest', text: '深處寶箱', icon: '📦', repeatable: false, triggered: false, itemId: 'health_potion', qty: 1 },
       ],
     };
   }

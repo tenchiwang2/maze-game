@@ -19,7 +19,7 @@ export const QUEST_DEFS = [
     acceptAt: 'npc',
     repeatable: false,
     steps: [
-      { desc: '擊敗洞穴蝙蝠 (0/3)', type: 'kill', enemyId: 'bat', count: 3 },
+      { desc: '擊敗洞穴蝙蝠', type: 'kill', enemyId: 'bat', count: 3 },
       { desc: '前往河畔城回報',       type: 'reach', locationId: 'town_riverside' },
     ],
     timeLimitMins: 4320,   // 3 天
@@ -48,7 +48,7 @@ export const QUEST_DEFS = [
     acceptAt: 'npc',
     repeatable: false,
     steps: [
-      { desc: '擊退哥布林 (0/2)', type: 'kill', enemyId: 'goblin', count: 2 },
+      { desc: '擊退哥布林', type: 'kill', enemyId: 'goblin', count: 2 },
       { desc: '回報港口長',       type: 'reach', locationId: 'town_harbor' },
     ],
     timeLimitMins: 4320,   // 3 天
@@ -112,7 +112,7 @@ export const QUEST_DEFS = [
     repeatable: false,
     steps: [
       { desc: '前往霜城要塞',         type: 'reach', locationId: 'capital_frost' },
-      { desc: '消滅冰雪狼 (0/2)',     type: 'kill',  enemyId: 'bat', count: 2 },
+      { desc: '消滅冰雪狼',     type: 'kill',  enemyId: 'bat', count: 2 },
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 80, exp: 50, items: [{ itemId: 'health_potion', qty: 3 }] },
@@ -127,7 +127,7 @@ export const QUEST_DEFS = [
     repeatable: false,
     steps: [
       { desc: '前往冰湖城',             type: 'reach', locationId: 'town_icelake' },
-      { desc: '清除骷髏守衛 (0/2)',     type: 'kill',  enemyId: 'skeleton', count: 2 },
+      { desc: '清除骷髏守衛',     type: 'kill',  enemyId: 'skeleton', count: 2 },
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 90, exp: 60, items: [{ itemId: 'hi_potion', qty: 1 }] },
@@ -142,7 +142,7 @@ export const QUEST_DEFS = [
     repeatable: false,
     steps: [
       { desc: '前往雪嶺村調查',         type: 'reach', locationId: 'town_small_peak' },
-      { desc: '消滅威脅生物 (0/3)',     type: 'kill',  enemyId: 'skeleton', count: 3 },
+      { desc: '消滅威脅生物',     type: 'kill',  enemyId: 'skeleton', count: 3 },
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 110, exp: 75, items: [{ itemId: 'health_potion', qty: 3 }] },
