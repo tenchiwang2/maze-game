@@ -1149,6 +1149,9 @@ export default function MazeFirstPerson() {
               addToast({ type: 'combat', icon: '⚔️', title: `挑戰 ${nearNPC.name}！`, duration: 1800 });
             } else if (nearNPC.dialogueId) {
               s.uiPaused = true;
+              const p = playerRef.current;
+              // report 步驟：找到 NPC 時推進任務進度
+              QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'report', { npcId: nearNPC.dialogueId }));
               // 優先檢查：是否有完成但未領獎的任務可交差
               if (tryClaimQuest(nearNPC.dialogueId)) {
                 addToast({ type: 'quest', icon: '📬', title: `任務交差：${nearNPC.name}`, duration: 1500 });
@@ -1157,6 +1160,7 @@ export default function MazeFirstPerson() {
                 setActiveDialogue(nearNPC.dialogueId);
                 addToast({ type: 'npc', icon: nearNPC.icon, title: nearNPC.name, duration: 1500 });
               }
+              setQuestLog(p.quests.map(q => ({ ...q })));
             }
           }
         }

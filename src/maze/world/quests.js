@@ -14,13 +14,13 @@ export const QUEST_DEFS = [
   {
     id: 'quest_guild_trial',
     title: '公會入會試煉',
-    desc: '冒險者公會要求新入會成員展現基本戰鬥能力：消滅地底蝙蝠，再前往河畔城回報結果。',
+    desc: '冒險者公會要求新入會成員展現基本戰鬥能力：消滅洞穴蝙蝠，再回到冒險公會回報結果。',
     giverNpcId: 'guild_master',
     acceptAt: 'npc',
     repeatable: false,
     steps: [
       { desc: '擊敗洞穴蝙蝠', type: 'kill', enemyId: 'bat', count: 3 },
-      { desc: '前往河畔城回報',       type: 'reach', locationId: 'town_riverside' },
+      { desc: '回到冒險公會（亞薩王都）回報', type: 'reach', locationId: 'capital_ys' },
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 60, exp: 80, items: [{ itemId: 'health_potion', qty: 2 }] },
@@ -65,8 +65,9 @@ export const QUEST_DEFS = [
     acceptAt: 'npc',
     repeatable: false,
     steps: [
-      { desc: '進入火山洞窟',   type: 'reach', locationId: 'dungeon_volcano' },
-      { desc: '擊倒地洞守衛',   type: 'kill',  enemyId: 'dungeon_boss', count: 1 },
+      { desc: '進入火山洞窟',         type: 'reach', locationId: 'dungeon_volcano' },
+      { desc: '擊倒地洞守衛',         type: 'kill',  enemyId: 'dungeon_boss', count: 1 },
+      { desc: '回到沙漠帝都向蘇丹回報', type: 'reach', locationId: 'capital_desert' },
     ],
     timeLimitMins: 20160,  // 14 天
     reward: { gold: 150, exp: 100, items: [{ itemId: 'steel_sword', qty: 1 }] },
@@ -112,7 +113,8 @@ export const QUEST_DEFS = [
     repeatable: false,
     steps: [
       { desc: '前往霜城要塞',         type: 'reach', locationId: 'capital_frost' },
-      { desc: '消滅冰雪狼',     type: 'kill',  enemyId: 'bat', count: 2 },
+      { desc: '消滅冰雪狼',           type: 'kill',  enemyId: 'bat', count: 2 },
+      { desc: '回到霜城要塞向酋長回報', type: 'reach', locationId: 'capital_frost' },
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 80, exp: 50, items: [{ itemId: 'health_potion', qty: 3 }] },
@@ -127,7 +129,8 @@ export const QUEST_DEFS = [
     repeatable: false,
     steps: [
       { desc: '前往冰湖城',             type: 'reach', locationId: 'town_icelake' },
-      { desc: '清除骷髏守衛',     type: 'kill',  enemyId: 'skeleton', count: 2 },
+      { desc: '清除骷髏守衛',           type: 'kill',  enemyId: 'skeleton', count: 2 },
+      { desc: '在世界地圖找冰法師回報',  type: 'report', npcId: 'npc_ice_mage' },
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 90, exp: 60, items: [{ itemId: 'hi_potion', qty: 1 }] },
@@ -142,7 +145,8 @@ export const QUEST_DEFS = [
     repeatable: false,
     steps: [
       { desc: '前往雪嶺村調查',         type: 'reach', locationId: 'town_small_peak' },
-      { desc: '消滅威脅生物',     type: 'kill',  enemyId: 'skeleton', count: 3 },
+      { desc: '消滅威脅生物',           type: 'kill',  enemyId: 'skeleton', count: 3 },
+      { desc: '在世界地圖找獵人回報',    type: 'report', npcId: 'npc_hunter_snow' },
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 110, exp: 75, items: [{ itemId: 'health_potion', qty: 3 }] },

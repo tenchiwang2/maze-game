@@ -221,6 +221,12 @@ export function checkQuestStep(player, questDef, eventType, eventData) {
     if (qState.stepIdx >= questDef.steps.length) qState.completed = true;
     return true;
   }
+  // report：找到世界 NPC（dialogueId 對應）時完成
+  if (step.type === 'report' && eventType === 'report' && eventData.npcId === step.npcId) {
+    qState.stepIdx++;
+    if (qState.stepIdx >= questDef.steps.length) qState.completed = true;
+    return true;
+  }
   return false;
 }
 
