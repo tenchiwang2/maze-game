@@ -18,8 +18,11 @@ import { drawOverworld } from './OverworldRenderer.jsx';
 import { NPC_DEFS } from './world/npcs.js';
 import { initNPCs, updateNPCs, getNearbyNPC, getHostileNPCsNear } from './npcSystem.js';
 import { createPlayer, addItem, addQuest, claimReward, checkQuestStep, checkExpiredQuests, gainExp, hasItem } from './playerState.jsx';
-import { initShopStocks, checkRestockNeeds, processCraftingQueue,
-         initResourceNodes, getNearbyResourceNode, harvestNode } from './supplySystem.js';
+import {
+  initShopStocks, checkRestockNeeds, processCraftingQueue,
+  generateSupplyQuests, acceptSupplyQuest, tryDeliverSupplyQuests, checkExpiredSupplyQuests,
+  initResourceNodes, getNearbyResourceNode, harvestNode,
+} from './supplySystem.js';
 import QuestOfferPanel from './QuestOfferPanel.jsx';
 import QuestLogPanel   from './QuestLogPanel.jsx';
 import { applyCombatResult } from './combatService.js';
@@ -551,6 +554,8 @@ export default function MazeFirstPerson() {
   // 供應鏈：商店庫存 & 製作佇列
   const shopStocksRef    = useRef(initShopStocks());
   const craftingQueueRef = useRef([]);
+  // 供應鏈：補貨任務
+  const supplyQuestsRef  = useRef([]);
   // 採集節點狀態
   const resourceNodesRef = useRef(initResourceNodes());
 
@@ -1124,9 +1129,15 @@ export default function MazeFirstPerson() {
                 addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 })
               );
             }
-            // 供應鏈：檢查補貨需求 + 處理到期製作
+            // 供應鏈：補貨任務生成 + 逾時檢查 + 自動補貨兜底
             {
-              const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, s.totalGameMins);
+              // 新增補貨任務
+              const newSQ = generateSupplyQuests(shopStocksRef.current, supplyQuestsRef.current, s.totalGameMins);
+              for (const q of newSQ) supplyQuestsRef.current.push(q);
+              // 補貨任務逾時 → 退回市場
+              checkExpiredSupplyQuests(supplyQuestsRef.current, s.totalGameMins);
+              // 自動補貨兜底（2 天後無人接單才啟動）
+              const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, supplyQuestsRef.current, s.totalGameMins);
               for (const j of newJobs) craftingQueueRef.current.push(j);
               processCraftingQueue(shopStocksRef.current, craftingQueueRef.current, s.totalGameMins);
             }
@@ -1239,9 +1250,12 @@ export default function MazeFirstPerson() {
               addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 })
             );
           }
-          // 供應鏈：補貨檢查（地城內也流逝時間）
+          // 供應鏈：補貨任務 + 自動補貨（地城內也流逝時間）
           {
-            const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, s.totalGameMins);
+            const newSQ = generateSupplyQuests(shopStocksRef.current, supplyQuestsRef.current, s.totalGameMins);
+            for (const q of newSQ) supplyQuestsRef.current.push(q);
+            checkExpiredSupplyQuests(supplyQuestsRef.current, s.totalGameMins);
+            const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, supplyQuestsRef.current, s.totalGameMins);
             for (const j of newJobs) craftingQueueRef.current.push(j);
             processCraftingQueue(shopStocksRef.current, craftingQueueRef.current, s.totalGameMins);
           }
@@ -1718,7 +1732,26 @@ export default function MazeFirstPerson() {
   // ── UI 面板關閉回呼 ──
   function closeDialogue()   { setActiveDialogue(null);   g.current.uiPaused = false; g.current.interactCooldown = 60; advanceGameTime(TIME_DIALOGUE); }
   function closeQuestLog()   { setShowQuestLog(false);    g.current.uiPaused = false; g.current.interactCooldown = 30; }
-  function closeShop()      { setActiveShop(null);     g.current.uiPaused = false; g.current.interactCooldown = 60; advanceGameTime(TIME_SHOP); }
+  function closeShop() {
+    // 離開商店前：自動嘗試交付補貨任務
+    if (activeShop) {
+      const delivered = tryDeliverSupplyQuests(
+        playerRef.current, activeShop,
+        supplyQuestsRef.current, craftingQueueRef.current,
+        shopStocksRef.current, g.current.totalGameMins,
+      );
+      if (delivered.length > 0) {
+        delivered.forEach(q =>
+          addToast({ type: 'item', icon: q.resourceIcon, title: `補貨任務完成！+${q.reward.gold} G`, body: `${q.shopName} ${q.itemIcon}${q.itemName} 已補貨`, duration: 2800 })
+        );
+        setPlayerStats({ ...playerRef.current });
+      }
+    }
+    setActiveShop(null);
+    g.current.uiPaused = false;
+    g.current.interactCooldown = 60;
+    advanceGameTime(TIME_SHOP);
+  }
   function closeInventory() { setShowInventory(false); g.current.uiPaused = false; g.current.interactCooldown = 30; }
   function closeStats()     { setShowStats(false);     g.current.uiPaused = false; g.current.interactCooldown = 30; }
 
@@ -1912,12 +1945,16 @@ export default function MazeFirstPerson() {
               player={playerRef.current}
               shopStocks={shopStocksRef.current}
               craftingQueue={craftingQueueRef.current}
+              supplyQuests={supplyQuestsRef.current}
               totalGameMins={g.current.totalGameMins}
               onClose={closeShop}
               onBuy={() => {
-                const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, g.current.totalGameMins);
+                const newSQ = generateSupplyQuests(shopStocksRef.current, supplyQuestsRef.current, g.current.totalGameMins);
+                for (const q of newSQ) supplyQuestsRef.current.push(q);
+                const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, supplyQuestsRef.current, g.current.totalGameMins);
                 for (const j of newJobs) craftingQueueRef.current.push(j);
               }}
+              onAcceptQuest={questId => { acceptSupplyQuest(questId, supplyQuestsRef.current, g.current.totalGameMins); }}
               onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
             />
           )}
@@ -2069,12 +2106,16 @@ export default function MazeFirstPerson() {
             player={playerRef.current}
             shopStocks={shopStocksRef.current}
             craftingQueue={craftingQueueRef.current}
+            supplyQuests={supplyQuestsRef.current}
             totalGameMins={g.current.totalGameMins}
             onClose={closeShop}
             onBuy={() => {
-              const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, g.current.totalGameMins);
+              const newSQ = generateSupplyQuests(shopStocksRef.current, supplyQuestsRef.current, g.current.totalGameMins);
+              for (const q of newSQ) supplyQuestsRef.current.push(q);
+              const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, supplyQuestsRef.current, g.current.totalGameMins);
               for (const j of newJobs) craftingQueueRef.current.push(j);
             }}
+            onAcceptQuest={questId => { acceptSupplyQuest(questId, supplyQuestsRef.current, g.current.totalGameMins); }}
             onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
           />
         )}
