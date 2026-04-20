@@ -57,13 +57,25 @@ function RewardRow({ reward }) {
   );
 }
 
-export default function QuestLogPanel({ questLog, questDefs, onClose }) {
+// 將分鐘數轉為「X天X時」可讀字串
+function formatMins(mins) {
+  if (mins <= 0) return '已超時';
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  const m = mins % 60;
+  if (d > 0) return `${d}天${h > 0 ? h + '時' : ''}`;
+  if (h > 0) return `${h}時${m > 0 ? m + '分' : ''}`;
+  return `${m}分`;
+}
+
+export default function QuestLogPanel({ questLog, questDefs, totalGameMins = 0, onClose }) {
   const [selected, setSelected] = useState(null);
 
-  // 只顯示未領獎的任務
-  const active = questLog.filter(q => !q.claimed);
-  const inProgress = active.filter(q => !q.completed);
-  const claimable  = active.filter(q => q.completed);
+  // 只顯示未領獎的任務（含失敗）
+  const active    = questLog.filter(q => !q.claimed);
+  const failed    = active.filter(q => q.failed);
+  const inProgress = active.filter(q => !q.completed && !q.failed);
+  const claimable  = active.filter(q => q.completed && !q.failed);
 
   const selectedDef = selected ? questDefs.find(d => d.id === selected) : null;
   const selectedQ   = selected ? active.find(q => q.questId === selected) : null;
@@ -82,6 +94,7 @@ export default function QuestLogPanel({ questLog, questDefs, onClose }) {
             📜 任務日誌
             <span style={{ fontSize: 11, color: '#607090', fontWeight: 400, marginLeft: 10 }}>
               進行中 {inProgress.length} · 可交差 {claimable.length}
+              {failed.length > 0 && <span style={{ color: '#cc4444', marginLeft: 6 }}>· 失敗 {failed.length}</span>}
             </span>
           </div>
           <button onClick={onClose} style={{
@@ -136,6 +149,10 @@ export default function QuestLogPanel({ questLog, questDefs, onClose }) {
             {inProgress.map(q => {
               const def = questDefs.find(d => d.id === q.questId);
               if (!def) return null;
+              const remaining = def.timeLimitMins
+                ? def.timeLimitMins - (totalGameMins - q.acceptedAt)
+                : null;
+              const urgent = remaining !== null && remaining < 1440; // 少於 1 天顯示警示
               return (
                 <div key={q.questId} onClick={() => setSelected(q.questId)}
                   style={{
@@ -146,6 +163,33 @@ export default function QuestLogPanel({ questLog, questDefs, onClose }) {
                     transition: 'background 0.1s',
                   }}>
                   ◎ {def.title}
+                  {remaining !== null && (
+                    <div style={{ fontSize: 10, color: urgent ? '#ff7060' : '#5080a0', marginTop: 2 }}>
+                      ⏳ {formatMins(remaining)}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {failed.length > 0 && (
+              <div style={{ padding: '8px 14px 2px', fontSize: 10, color: '#804040', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                失敗
+              </div>
+            )}
+            {failed.map(q => {
+              const def = questDefs.find(d => d.id === q.questId);
+              if (!def) return null;
+              return (
+                <div key={q.questId} onClick={() => setSelected(q.questId)}
+                  style={{
+                    padding: '8px 14px', cursor: 'pointer', fontSize: 13,
+                    background: selected === q.questId ? 'rgba(200,60,60,0.12)' : 'transparent',
+                    borderLeft: selected === q.questId ? '3px solid #994444' : '3px solid transparent',
+                    color: '#885555',
+                    transition: 'background 0.1s',
+                  }}>
+                  ✕ {def.title}
                 </div>
               );
             })}
@@ -166,7 +210,16 @@ export default function QuestLogPanel({ questLog, questDefs, onClose }) {
                   <div style={{ fontSize: 16, fontWeight: 700, color: '#e8e0c8', marginBottom: 4 }}>
                     {selectedDef.title}
                   </div>
-                  {selectedQ.completed && !selectedQ.claimed && (
+                  {selectedQ.failed && (
+                    <div style={{
+                      display: 'inline-block', fontSize: 11, padding: '2px 8px',
+                      borderRadius: 4, background: 'rgba(180,40,40,0.2)',
+                      border: '0.5px solid rgba(180,40,40,0.5)', color: '#ff7060',
+                    }}>
+                      💀 任務失敗（超過期限）
+                    </div>
+                  )}
+                  {selectedQ.completed && !selectedQ.claimed && !selectedQ.failed && (
                     <div style={{
                       display: 'inline-block', fontSize: 11, padding: '2px 8px',
                       borderRadius: 4, background: 'rgba(180,140,40,0.2)',
@@ -175,6 +228,21 @@ export default function QuestLogPanel({ questLog, questDefs, onClose }) {
                       📬 回到委託 NPC 交差
                     </div>
                   )}
+                  {!selectedQ.completed && !selectedQ.failed && selectedDef.timeLimitMins && (() => {
+                    const remaining = selectedDef.timeLimitMins - (totalGameMins - selectedQ.acceptedAt);
+                    const urgent = remaining < 1440;
+                    return (
+                      <div style={{
+                        display: 'inline-block', fontSize: 11, padding: '2px 8px', marginLeft: 6,
+                        borderRadius: 4,
+                        background: urgent ? 'rgba(200,60,40,0.15)' : 'rgba(40,80,140,0.2)',
+                        border: urgent ? '0.5px solid rgba(200,60,40,0.5)' : '0.5px solid rgba(60,100,200,0.4)',
+                        color: urgent ? '#ff7060' : '#80aadd',
+                      }}>
+                        ⏳ 剩餘 {formatMins(remaining)}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* 描述 */}

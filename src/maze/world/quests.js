@@ -22,6 +22,7 @@ export const QUEST_DEFS = [
       { desc: '擊敗洞穴蝙蝠 (0/3)', type: 'kill', enemyId: 'bat', count: 3 },
       { desc: '前往河畔城回報',       type: 'reach', locationId: 'town_riverside' },
     ],
+    timeLimitMins: 4320,   // 3 天
     reward: { gold: 60, exp: 80, items: [{ itemId: 'health_potion', qty: 2 }] },
   },
 
@@ -35,6 +36,7 @@ export const QUEST_DEFS = [
     steps: [
       { desc: '探索古代神殿', type: 'reach', locationId: 'temple_ancient' },
     ],
+    timeLimitMins: 10080,  // 7 天
     reward: { gold: 200, exp: 120, items: [{ itemId: 'tower_emblem', qty: 1 }] },
   },
 
@@ -49,6 +51,7 @@ export const QUEST_DEFS = [
       { desc: '擊退哥布林 (0/2)', type: 'kill', enemyId: 'goblin', count: 2 },
       { desc: '回報港口長',       type: 'reach', locationId: 'town_harbor' },
     ],
+    timeLimitMins: 4320,   // 3 天
     reward: { gold: 120, exp: 70, items: [{ itemId: 'iron_sword', qty: 1 }] },
   },
 
@@ -65,6 +68,7 @@ export const QUEST_DEFS = [
       { desc: '進入火山洞窟',   type: 'reach', locationId: 'dungeon_volcano' },
       { desc: '擊倒地洞守衛',   type: 'kill',  enemyId: 'dungeon_boss', count: 1 },
     ],
+    timeLimitMins: 20160,  // 14 天
     reward: { gold: 150, exp: 100, items: [{ itemId: 'steel_sword', qty: 1 }] },
   },
 
@@ -79,6 +83,7 @@ export const QUEST_DEFS = [
       { desc: '前往沙漠帝都集合', type: 'reach', locationId: 'capital_desert' },
       { desc: '護送至沙漠綠洲',   type: 'reach', locationId: 'town_oasis' },
     ],
+    timeLimitMins: 20160,  // 14 天（跨區遠距離）
     reward: { gold: 200, exp: 80, items: [] },
   },
 
@@ -92,6 +97,7 @@ export const QUEST_DEFS = [
     steps: [
       { desc: '前往古代神殿調查', type: 'reach', locationId: 'temple_ancient' },
     ],
+    timeLimitMins: 10080,  // 7 天
     reward: { gold: 100, exp: 90, items: [{ itemId: 'health_potion', qty: 4 }] },
   },
 
@@ -108,6 +114,7 @@ export const QUEST_DEFS = [
       { desc: '前往霜城要塞',         type: 'reach', locationId: 'capital_frost' },
       { desc: '消滅冰雪狼 (0/2)',     type: 'kill',  enemyId: 'bat', count: 2 },
     ],
+    timeLimitMins: 4320,   // 3 天
     reward: { gold: 80, exp: 50, items: [{ itemId: 'health_potion', qty: 3 }] },
   },
 
@@ -122,6 +129,7 @@ export const QUEST_DEFS = [
       { desc: '前往冰湖城',             type: 'reach', locationId: 'town_icelake' },
       { desc: '清除骷髏守衛 (0/2)',     type: 'kill',  enemyId: 'skeleton', count: 2 },
     ],
+    timeLimitMins: 4320,   // 3 天
     reward: { gold: 90, exp: 60, items: [{ itemId: 'hi_potion', qty: 1 }] },
   },
 
@@ -136,6 +144,7 @@ export const QUEST_DEFS = [
       { desc: '前往雪嶺村調查',         type: 'reach', locationId: 'town_small_peak' },
       { desc: '消滅威脅生物 (0/3)',     type: 'kill',  enemyId: 'skeleton', count: 3 },
     ],
+    timeLimitMins: 4320,   // 3 天
     reward: { gold: 110, exp: 75, items: [{ itemId: 'health_potion', qty: 3 }] },
   },
 

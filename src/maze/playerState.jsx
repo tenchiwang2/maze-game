@@ -145,7 +145,7 @@ export function getItemQty(player, itemId) {
 }
 
 // ── 任務系統 ─────────────────────────────────
-export function addQuest(player, questDef) {
+export function addQuest(player, questDef, totalGameMins = 0) {
   // 已存在且未 claimed → 不重複接
   const existing = player.quests.find(q => q.questId === questDef.id);
   if (existing && !existing.claimed) return;
@@ -155,12 +155,30 @@ export function addQuest(player, questDef) {
     if (idx >= 0) player.quests.splice(idx, 1);
   }
   player.quests.push({
-    questId:   questDef.id,
-    stepIdx:   0,
-    completed: false,
-    claimed:   false,     // ← 已領獎才設為 true
-    progress:  {},        // { [stepIdx]: current }
+    questId:    questDef.id,
+    stepIdx:    0,
+    completed:  false,
+    claimed:    false,          // ← 已領獎才設為 true
+    failed:     false,          // ← 超時失敗
+    progress:   {},             // { [stepIdx]: current }
+    acceptedAt: totalGameMins,  // 接任務時的總遊戲分鐘數
   });
+}
+
+// 檢查所有進行中任務是否超時，回傳失敗的任務 def 陣列
+export function checkExpiredQuests(player, questDefs, totalGameMins) {
+  const failed = [];
+  for (const q of player.quests) {
+    if (q.completed || q.claimed || q.failed) continue;
+    const def = questDefs.find(d => d.id === q.questId);
+    if (!def || !def.timeLimitMins) continue;
+    const elapsed = totalGameMins - q.acceptedAt;
+    if (elapsed >= def.timeLimitMins) {
+      q.failed = true;
+      failed.push(def);
+    }
+  }
+  return failed;
 }
 
 // 領取任務獎勵，回傳 reward 物件（或 null 若不可領）

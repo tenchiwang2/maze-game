@@ -17,7 +17,7 @@ import { WORLD_FACTORIES, WORLD_FACTORY_IDS } from './worldFactory.jsx';
 import { drawOverworld } from './OverworldRenderer.jsx';
 import { NPC_DEFS } from './world/npcs.js';
 import { initNPCs, updateNPCs, getNearbyNPC, getHostileNPCsNear } from './npcSystem.js';
-import { createPlayer, addItem, addQuest, claimReward, checkQuestStep, gainExp, hasItem } from './playerState.jsx';
+import { createPlayer, addItem, addQuest, claimReward, checkQuestStep, checkExpiredQuests, gainExp, hasItem } from './playerState.jsx';
 import QuestOfferPanel from './QuestOfferPanel.jsx';
 import QuestLogPanel   from './QuestLogPanel.jsx';
 import { applyCombatResult } from './combatService.js';
@@ -567,6 +567,7 @@ export default function MazeFirstPerson() {
     lightCfg: { ambient: AMBIENT, torchRadius: TORCH_RADIUS },
     uiPaused: false,
     gameTime: TIME_START,  // 分鐘，game loop 用
+    totalGameMins: 0,      // 累積總遊戲分鐘（不循環，供任務期限判定）
     timeAccum: 0,          // 移動距離累積器
     dungeonEnemies: [],    // 遊走敵人實體陣列
     worldNPCs: [],         // 世界 NPC 實體陣列
@@ -986,6 +987,7 @@ export default function MazeFirstPerson() {
           if (minsGained > 0) {
             s.timeAccum -= minsGained * TIME_WORLD_PER_MIN;
             s.gameTime = advanceTime(s.gameTime, minsGained);
+            s.totalGameMins += minsGained;
             setGameTime(s.gameTime);
             tickLightBuff();
             // ★ NPC 移動只在時間推進時執行（玩家移動才觸發）
@@ -996,6 +998,14 @@ export default function MazeFirstPerson() {
                 worldLocationsRef.current,
                 s.gameTime,
                 minsGained,
+              );
+            }
+            // 任務逾時檢查
+            const expired = checkExpiredQuests(playerRef.current, QUEST_DEFS, s.totalGameMins);
+            if (expired.length > 0) {
+              setQuestLog(playerRef.current.quests.map(q => ({ ...q })));
+              expired.forEach(def =>
+                addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 })
               );
             }
           }
@@ -1075,9 +1085,18 @@ export default function MazeFirstPerson() {
         if (minsGained > 0) {
           s.timeAccum -= minsGained * TIME_DUNGEON_PER_MIN;
           s.gameTime = advanceTime(s.gameTime, minsGained);
+          s.totalGameMins += minsGained;
           setGameTime(s.gameTime);
           tickLightBuff();
           applyLightBuff();
+          // 任務逾時檢查
+          const expired = checkExpiredQuests(playerRef.current, QUEST_DEFS, s.totalGameMins);
+          if (expired.length > 0) {
+            setQuestLog(playerRef.current.quests.map(q => ({ ...q })));
+            expired.forEach(def =>
+              addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 })
+            );
+          }
         }
       }
 
@@ -1494,7 +1513,7 @@ export default function MazeFirstPerson() {
     if (mode === 'offer') {
       const def = QUEST_DEFS.find(q => q.id === questId);
       if (def) {
-        addQuest(playerRef.current, def);
+        addQuest(playerRef.current, def, g.current.totalGameMins);
         setQuestLog(playerRef.current.quests.map(q => ({ ...q })));
         addToast({ type: 'quest', icon: '📜', title: `接受任務：${def.title}`, duration: 2500 });
       }
@@ -2217,6 +2236,7 @@ export default function MazeFirstPerson() {
         <QuestLogPanel
           questLog={questLog}
           questDefs={QUEST_DEFS}
+          totalGameMins={g.current.totalGameMins ?? 0}
           onClose={closeQuestLog}
         />
       )}
