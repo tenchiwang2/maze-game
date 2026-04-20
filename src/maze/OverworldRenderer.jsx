@@ -4,6 +4,8 @@
 // ─────────────────────────────────────────────
 import { TERRAIN, LOC_TYPE } from './worldMap.jsx';
 import { WORLD_TILE_SIZE } from './constants.jsx';
+import { RESOURCE_NODES } from './world/resources.js';
+import { ITEMS } from './itemData.jsx';
 
 // 地形基本色
 const TERRAIN_COLORS = {
@@ -77,7 +79,7 @@ const NATION_COLORS = {
 // ─────────────────────────────────────────────
 import { PROFESSIONS } from './world/npcs.js';
 
-export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc, npcs = [], nearbyNPC = null) {
+export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc, npcs = [], nearbyNPC = null, nodeStates = null, totalGameMins = 0, nearbyNode = null) {
   const TS   = WORLD_TILE_SIZE;
   const cols = terrain[0].length;
   const rows = terrain.length;
@@ -264,6 +266,42 @@ export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc, 
     }
   }
 
+  // ── 3b. 資源節點 ─────────────────────────────
+  if (nodeStates) {
+    for (const node of RESOURCE_NODES) {
+      const sx = node.wx * TS - camX + TS / 2;
+      const sy = node.wy * TS - camY + TS / 2;
+      if (sx < -16 || sx > W + 16 || sy < -16 || sy > H + 16) continue;
+
+      const state   = nodeStates[node.id];
+      const elapsed = state?.harvestedAt != null ? totalGameMins - state.harvestedAt : Infinity;
+      const ready   = elapsed >= node.respawnDays * 1440;
+      const isNear  = nearbyNode?.node?.id === node.id;
+
+      const item    = ITEMS[node.resourceId];
+      const icon    = item?.icon ?? '🌿';
+
+      // 節點外圈（就緒=綠，冷卻=暗灰）
+      ctx.beginPath();
+      ctx.arc(sx, sy, isNear ? 9 : 7, 0, Math.PI * 2);
+      ctx.fillStyle = ready
+        ? (isNear ? 'rgba(80,200,80,0.45)' : 'rgba(60,160,60,0.30)')
+        : 'rgba(60,60,60,0.30)';
+      ctx.fill();
+      ctx.strokeStyle = ready ? (isNear ? '#80ff80' : '#40a840') : '#505050';
+      ctx.lineWidth   = isNear ? 1.5 : 1;
+      ctx.stroke();
+
+      // 圖示
+      ctx.font = `${TS * 0.45 | 0}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.globalAlpha = ready ? 1.0 : 0.35;
+      ctx.fillText(icon, sx, sy);
+      ctx.globalAlpha = 1.0;
+    }
+  }
+
   // ── 4. 玩家（黃色圓點）──────────────────────
   const px = wx * TS - camX;
   const py = wy * TS - camY;
@@ -297,6 +335,37 @@ export function drawOverworld(ctx, W, H, terrain, locations, wx, wy, nearbyLoc, 
       ctx.fillStyle = NATION_COLORS[nearbyLoc.nationLabel] || '#ccc';
       ctx.font = '10px monospace';
       ctx.fillText(nearbyLoc.nationLabel, W / 2, H - 26);
+    }
+  }
+
+  // ── 5b. 資源節點 HUD ─────────────────────────
+  if (nearbyNode && !nearbyLoc && !nearbyNPC) {
+    const { node, ready } = nearbyNode;
+    const item = ITEMS[node.resourceId];
+    const txt  = ready
+      ? `[E] 採集 ${node.label}（${item?.icon ?? ''}${item?.name ?? node.resourceId} ×${node.qty}）`
+      : `${node.label} 正在再生...`;
+    const tw = Math.max(220, txt.length * 9 + 28);
+    ctx.fillStyle = 'rgba(0,0,0,0.80)';
+    ctx.beginPath(); ctx.roundRect(W / 2 - tw / 2, H - 58, tw, 42, 6); ctx.fill();
+    ctx.strokeStyle = ready ? 'rgba(80,220,80,0.9)' : 'rgba(120,120,120,0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = ready ? '#80ee80' : '#888';
+    ctx.font = 'bold 13px monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, W / 2, H - 42);
+    if (!ready) {
+      // 顯示冷卻剩餘
+      const state   = nearbyNode.state;
+      const elapsed = state?.harvestedAt != null ? totalGameMins - state.harvestedAt : 0;
+      const remain  = Math.max(0, node.respawnDays * 1440 - elapsed);
+      const d = Math.floor(remain / 1440);
+      const h = Math.floor((remain % 1440) / 60);
+      const label = d > 0 ? `剩餘 ${d}天${h > 0 ? h + '時' : ''}` : `剩餘 ${h}時${remain % 60}分`;
+      ctx.fillStyle = '#666';
+      ctx.font = '10px monospace';
+      ctx.fillText(label, W / 2, H - 26);
     }
   }
 

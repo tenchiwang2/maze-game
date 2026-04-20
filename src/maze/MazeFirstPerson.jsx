@@ -18,7 +18,8 @@ import { drawOverworld } from './OverworldRenderer.jsx';
 import { NPC_DEFS } from './world/npcs.js';
 import { initNPCs, updateNPCs, getNearbyNPC, getHostileNPCsNear } from './npcSystem.js';
 import { createPlayer, addItem, addQuest, claimReward, checkQuestStep, checkExpiredQuests, gainExp, hasItem } from './playerState.jsx';
-import { initShopStocks, checkRestockNeeds, processCraftingQueue } from './supplySystem.js';
+import { initShopStocks, checkRestockNeeds, processCraftingQueue,
+         initResourceNodes, getNearbyResourceNode, harvestNode } from './supplySystem.js';
 import QuestOfferPanel from './QuestOfferPanel.jsx';
 import QuestLogPanel   from './QuestLogPanel.jsx';
 import { applyCombatResult } from './combatService.js';
@@ -550,6 +551,8 @@ export default function MazeFirstPerson() {
   // 供應鏈：商店庫存 & 製作佇列
   const shopStocksRef    = useRef(initShopStocks());
   const craftingQueueRef = useRef([]);
+  // 採集節點狀態
+  const resourceNodesRef = useRef(initResourceNodes());
 
   const g = useRef({
     walls: null, grid: null, zoneMap: null, rooms: [], doors: [],
@@ -1137,7 +1140,7 @@ export default function MazeFirstPerson() {
           setNearbyLocation(near);
         }
 
-        // E 鍵：優先進入地點，其次對話 NPC
+        // E 鍵：優先進入地點，其次採集資源，再對話 NPC
         if ((s.keys['KeyE'] || s.keys['e']) && s.interactCooldown === 0) {
           s.keys['KeyE'] = false; s.keys['e'] = false;
           if (near) {
@@ -1146,31 +1149,44 @@ export default function MazeFirstPerson() {
             s.animId = requestAnimationFrame(() => renderRef.current?.());
             return;
           }
-          // 靠近的 NPC 互動
-          const nearNPC = getNearbyNPC(s.worldNPCs, s.wx, s.wy, 1.8);
-          if (nearNPC) {
-            s.interactCooldown = 40;
-            if (nearNPC.alignment === 'hostile' && nearNPC.enemyId) {
-              // 敵對 NPC → 戰鬥
-              const idx = s.worldNPCs.indexOf(nearNPC);
-              if (idx >= 0) s.worldNPCs.splice(idx, 1);
-              s.uiPaused = true;
-              emit('combat:start', { enemyId: nearNPC.enemyId });
-              addToast({ type: 'combat', icon: '⚔️', title: `挑戰 ${nearNPC.name}！`, duration: 1800 });
-            } else if (nearNPC.dialogueId) {
-              s.uiPaused = true;
-              const p = playerRef.current;
-              // report 步驟：找到 NPC 時推進任務進度
-              QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'report', { npcId: nearNPC.dialogueId }));
-              // 優先檢查：是否有完成但未領獎的任務可交差
-              if (tryClaimQuest(nearNPC.dialogueId)) {
-                addToast({ type: 'quest', icon: '📬', title: `任務交差：${nearNPC.name}`, duration: 1500 });
-              } else {
-                // 一般對話
-                setActiveDialogue(nearNPC.dialogueId);
-                addToast({ type: 'npc', icon: nearNPC.icon, title: nearNPC.name, duration: 1500 });
+          // 採集節點
+          const nearNode = getNearbyResourceNode(resourceNodesRef.current, s.wx, s.wy, s.totalGameMins, 1.5);
+          if (nearNode) {
+            s.interactCooldown = 30;
+            const result = harvestNode(playerRef.current, nearNode.node.id, resourceNodesRef.current, s.totalGameMins);
+            if (result && result.harvested > 0) {
+              setPlayerStats({ ...playerRef.current });
+              addToast({ type: 'item', icon: ITEMS[nearNode.node.resourceId]?.icon ?? '🌿', title: result.message, duration: 2200 });
+            } else if (result) {
+              addToast({ type: 'warn', icon: '🎒', title: result.message, duration: 2000 });
+            }
+          } else {
+            // 靠近的 NPC 互動
+            const nearNPC = getNearbyNPC(s.worldNPCs, s.wx, s.wy, 1.8);
+            if (nearNPC) {
+              s.interactCooldown = 40;
+              if (nearNPC.alignment === 'hostile' && nearNPC.enemyId) {
+                // 敵對 NPC → 戰鬥
+                const idx = s.worldNPCs.indexOf(nearNPC);
+                if (idx >= 0) s.worldNPCs.splice(idx, 1);
+                s.uiPaused = true;
+                emit('combat:start', { enemyId: nearNPC.enemyId });
+                addToast({ type: 'combat', icon: '⚔️', title: `挑戰 ${nearNPC.name}！`, duration: 1800 });
+              } else if (nearNPC.dialogueId) {
+                s.uiPaused = true;
+                const p = playerRef.current;
+                // report 步驟：找到 NPC 時推進任務進度
+                QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'report', { npcId: nearNPC.dialogueId }));
+                // 優先檢查：是否有完成但未領獎的任務可交差
+                if (tryClaimQuest(nearNPC.dialogueId)) {
+                  addToast({ type: 'quest', icon: '📬', title: `任務交差：${nearNPC.name}`, duration: 1500 });
+                } else {
+                  // 一般對話
+                  setActiveDialogue(nearNPC.dialogueId);
+                  addToast({ type: 'npc', icon: nearNPC.icon, title: nearNPC.name, duration: 1500 });
+                }
+                setQuestLog(p.quests.map(q => ({ ...q })));
               }
-              setQuestLog(p.quests.map(q => ({ ...q })));
             }
           }
         }
@@ -1179,7 +1195,10 @@ export default function MazeFirstPerson() {
         detectWorldNPCs();
       }
 
-      drawOverworld(ctx, W, H, terrain, worldLocationsRef.current, s.wx, s.wy, nearbyLocRef.current, s.worldNPCs, getNearbyNPC(s.worldNPCs, s.wx, s.wy, 1.8));
+      {
+        const nearNode = getNearbyResourceNode(resourceNodesRef.current, s.wx, s.wy, s.totalGameMins, 1.5);
+        drawOverworld(ctx, W, H, terrain, worldLocationsRef.current, s.wx, s.wy, nearbyLocRef.current, s.worldNPCs, getNearbyNPC(s.worldNPCs, s.wx, s.wy, 1.8), resourceNodesRef.current, s.totalGameMins, nearNode);
+      }
       s.animId = requestAnimationFrame(() => renderRef.current?.());
       return;
     }

@@ -129,3 +129,84 @@ export function getCraftingProgress(shopId, itemId, craftingQueue, totalGameMins
   if (!job) return null;
   return Math.max(0, job.dueAt - totalGameMins);
 }
+
+// ═════════════════════════════════════════════
+//  資源採集節點
+//  nodeStates 格式：{ [nodeId]: { harvestedAt: number | null } }
+// ═════════════════════════════════════════════
+import { RESOURCE_NODES } from './world/resources.js';
+import { ITEMS } from './itemData.jsx';
+
+// 初始化所有節點狀態（全部可採集）
+export function initResourceNodes() {
+  const states = {};
+  for (const node of RESOURCE_NODES) {
+    states[node.id] = { harvestedAt: null };
+  }
+  return states;
+}
+
+// 取得靠近的可採集節點（距離 <= proximityDist 格）
+export function getNearbyResourceNode(nodeStates, wx, wy, totalGameMins, proximityDist = 1.5) {
+  for (const node of RESOURCE_NODES) {
+    const dx = wx - (node.wx + 0.5);
+    const dy = wy - (node.wy + 0.5);
+    if (dx * dx + dy * dy > proximityDist * proximityDist) continue;
+    const state = nodeStates[node.id];
+    if (!state) continue;
+    return { node, state, ready: isNodeReady(node, state, totalGameMins) };
+  }
+  return null;
+}
+
+// 節點是否可採集
+export function isNodeReady(node, state, totalGameMins) {
+  if (state.harvestedAt === null) return true;
+  return (totalGameMins - state.harvestedAt) >= node.respawnDays * 1440;
+}
+
+// 採集節點：加入物品到背包（強制執行 stackLimit），回傳結果訊息
+// 回傳 { harvested: number, blocked: number, message: string } 或 null（無法採集）
+export function harvestNode(player, nodeId, nodeStates, totalGameMins) {
+  const node = RESOURCE_NODES.find(n => n.id === nodeId);
+  if (!node) return null;
+
+  const state = nodeStates[node.id];
+  if (!state || !isNodeReady(node, state, totalGameMins)) return null;
+
+  const item = ITEMS[node.resourceId];
+  const stackLimit = item?.stackLimit ?? Infinity;
+
+  // 計算背包中已有數量
+  const existing = player.items.find(i => i.itemId === node.resourceId);
+  const have = existing?.qty ?? 0;
+  const canTake = Math.min(node.qty, stackLimit - have);
+
+  if (canTake <= 0) {
+    return { harvested: 0, blocked: node.qty, message: `${item?.name ?? node.resourceId} 已達到攜帶上限（${stackLimit}）` };
+  }
+
+  // 加入背包
+  if (existing) {
+    existing.qty += canTake;
+  } else {
+    player.items.push({ itemId: node.resourceId, qty: canTake });
+  }
+
+  // 標記採集時間
+  state.harvestedAt = totalGameMins;
+
+  const blocked = node.qty - canTake;
+  const msg = blocked > 0
+    ? `採集了 ${item?.name} ×${canTake}（背包空間不足，遺留 ${blocked}）`
+    : `採集了 ${item?.name} ×${canTake}`;
+
+  return { harvested: canTake, blocked, message: msg };
+}
+
+// 取得節點剩餘冷卻時間（分鐘），0 = 可採集
+export function getNodeCooldown(node, state, totalGameMins) {
+  if (!state || state.harvestedAt === null) return 0;
+  const elapsed = totalGameMins - state.harvestedAt;
+  return Math.max(0, node.respawnDays * 1440 - elapsed);
+}
