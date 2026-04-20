@@ -97,4 +97,42 @@ export const ITEMS = {
     value: 1,
     desc: '通用貨幣。',
   },
+
+  // ── 採集資源（resource 類型，不可出售給一般商店）─
+  wild_herb: {
+    name: '野生草藥', type: 'resource', category: ITEM_CATEGORY.CONSUMABLE, icon: '🌿',
+    value: 5, stackLimit: 10,
+    desc: '亞薩王國草原上採集的藥草，鍊金師可製成回復藥。',
+    nation: 'ys',
+  },
+  iron_ore: {
+    name: '鐵礦石', type: 'resource', category: ITEM_CATEGORY.CONSUMABLE, icon: '⛏',
+    value: 8, stackLimit: 10,
+    desc: '亞薩礦山出產的鐵礦，鐵匠可打造武器與防具。',
+    nation: 'ys',
+  },
+  cactus_gel: {
+    name: '仙人掌膠', type: 'resource', category: ITEM_CATEGORY.CONSUMABLE, icon: '🌵',
+    value: 6, stackLimit: 10,
+    desc: '沙漠帝國特有的仙人掌汁液，可製成 MP 藥水。',
+    nation: 'desert',
+  },
+  desert_stone: {
+    name: '沙漠砂石', type: 'resource', category: ITEM_CATEGORY.CONSUMABLE, icon: '🪨',
+    value: 4, stackLimit: 10,
+    desc: '沙漠帝國特有的堅硬砂石，可鑄造防具。',
+    nation: 'desert',
+  },
+  frost_flower: {
+    name: '霜雪花', type: 'resource', category: ITEM_CATEGORY.CONSUMABLE, icon: '❄',
+    value: 10, stackLimit: 10,
+    desc: '雪域聯盟特有的稀有冰花，可製成高效藥水。',
+    nation: 'snow',
+  },
+  ice_crystal_ore: {
+    name: '冰晶礦石', type: 'resource', category: ITEM_CATEGORY.CONSUMABLE, icon: '💎',
+    value: 15, stackLimit: 10,
+    desc: '雪域深處的珍稀冰晶，可製成特殊武器。',
+    nation: 'snow',
+  },
 };

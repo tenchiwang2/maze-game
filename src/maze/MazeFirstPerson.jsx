@@ -18,6 +18,7 @@ import { drawOverworld } from './OverworldRenderer.jsx';
 import { NPC_DEFS } from './world/npcs.js';
 import { initNPCs, updateNPCs, getNearbyNPC, getHostileNPCsNear } from './npcSystem.js';
 import { createPlayer, addItem, addQuest, claimReward, checkQuestStep, checkExpiredQuests, gainExp, hasItem } from './playerState.jsx';
+import { initShopStocks, checkRestockNeeds, processCraftingQueue } from './supplySystem.js';
 import QuestOfferPanel from './QuestOfferPanel.jsx';
 import QuestLogPanel   from './QuestLogPanel.jsx';
 import { applyCombatResult } from './combatService.js';
@@ -546,6 +547,9 @@ export default function MazeFirstPerson() {
   const worldTerrainRef = useRef(null);
   // 當前世界地點（含工廠產生的隨機位置）
   const worldLocationsRef = useRef(WORLD_DEF.locations);
+  // 供應鏈：商店庫存 & 製作佇列
+  const shopStocksRef    = useRef(initShopStocks());
+  const craftingQueueRef = useRef([]);
 
   const g = useRef({
     walls: null, grid: null, zoneMap: null, rooms: [], doors: [],
@@ -1117,6 +1121,12 @@ export default function MazeFirstPerson() {
                 addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 })
               );
             }
+            // 供應鏈：檢查補貨需求 + 處理到期製作
+            {
+              const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, s.totalGameMins);
+              for (const j of newJobs) craftingQueueRef.current.push(j);
+              processCraftingQueue(shopStocksRef.current, craftingQueueRef.current, s.totalGameMins);
+            }
           }
         }
 
@@ -1209,6 +1219,12 @@ export default function MazeFirstPerson() {
             expired.forEach(def =>
               addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 })
             );
+          }
+          // 供應鏈：補貨檢查（地城內也流逝時間）
+          {
+            const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, s.totalGameMins);
+            for (const j of newJobs) craftingQueueRef.current.push(j);
+            processCraftingQueue(shopStocksRef.current, craftingQueueRef.current, s.totalGameMins);
           }
         }
       }
@@ -1873,8 +1889,16 @@ export default function MazeFirstPerson() {
           {activeShop && (
             <ShopPanel
               shopDef={SHOPS[activeShop]}
+              shopId={activeShop}
               player={playerRef.current}
+              shopStocks={shopStocksRef.current}
+              craftingQueue={craftingQueueRef.current}
+              totalGameMins={g.current.totalGameMins}
               onClose={closeShop}
+              onBuy={() => {
+                const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, g.current.totalGameMins);
+                for (const j of newJobs) craftingQueueRef.current.push(j);
+              }}
               onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
             />
           )}
@@ -2022,8 +2046,16 @@ export default function MazeFirstPerson() {
         {gameMode !== 'TOWN_MENU' && activeShop && (
           <ShopPanel
             shopDef={SHOPS[activeShop]}
+            shopId={activeShop}
             player={playerRef.current}
+            shopStocks={shopStocksRef.current}
+            craftingQueue={craftingQueueRef.current}
+            totalGameMins={g.current.totalGameMins}
             onClose={closeShop}
+            onBuy={() => {
+              const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, g.current.totalGameMins);
+              for (const j of newJobs) craftingQueueRef.current.push(j);
+            }}
             onPlayerUpdate={() => setPlayerStats({ ...playerRef.current })}
           />
         )}

@@ -4,7 +4,8 @@
 // ─────────────────────────────────────────────
 import { useState } from 'react';
 import { ITEMS } from './itemData.jsx';
-import { addItem, removeItem } from './playerState.jsx';
+import { addItem } from './playerState.jsx';
+import { buyFromShop, getStock, getCraftingProgress } from './supplySystem.js';
 
 const PANEL = {
   position: 'absolute', top: '50%', left: '50%',
@@ -12,35 +13,60 @@ const PANEL = {
   background: 'rgba(8,8,18,0.97)',
   border: '1px solid rgba(200,160,40,0.7)',
   borderRadius: 10, padding: '16px 20px',
-  width: 360, maxWidth: '94%',
+  width: 380, maxWidth: '94%',
   fontFamily: 'var(--font-mono, monospace)',
   zIndex: 10,
 };
 
-export default function ShopPanel({ shopDef, player, onClose, onPlayerUpdate }) {
+// 將剩餘分鐘數轉為「Xd Xh Xm」字串
+function fmtRemaining(mins) {
+  if (!Number.isFinite(mins) || mins <= 0) return '';
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  const m = Math.floor(mins % 60);
+  if (d > 0) return `${d}天${h > 0 ? h + '時' : ''}`;
+  if (h > 0) return `${h}時${m > 0 ? m + '分' : ''}`;
+  return `${m}分`;
+}
+
+export default function ShopPanel({
+  shopDef,
+  shopId,
+  player,
+  shopStocks,
+  craftingQueue,
+  totalGameMins,
+  onClose,
+  onBuy,         // (itemId, price) → void
+  onPlayerUpdate,
+}) {
   const [tab, setTab] = useState('buy');
   const [msg, setMsg] = useState('');
 
   if (!shopDef) { onClose(); return null; }
 
-  function buy(itemId) {
+  function handleBuy(itemId) {
+    if (!shopStocks || !shopId) return;
+    const result = buyFromShop(player, shopId, itemId, shopStocks);
+    if (!result.success) { setMsg(result.message); return; }
     const item = ITEMS[itemId];
-    if (!item) return;
-    if (player.gold < item.value) { setMsg('金幣不足！'); return; }
-    removeItem(player, 'gold', item.value);
     addItem(player, itemId, 1);
-    setMsg(`購買了 ${item.name}（-${item.value} 金幣）`);
-    onPlayerUpdate();
+    setMsg(`購買了 ${item?.name ?? itemId}（-${result.price} 金幣）`);
+    onBuy?.(itemId, result.price);
+    onPlayerUpdate?.();
   }
 
-  function sell(itemId, qty) {
+  function handleSell(itemId) {
     const item = ITEMS[itemId];
-    if (!item) return;
+    if (!item || item.value <= 0) return;
     const sellPrice = Math.floor(item.value * 0.5);
-    if (!removeItem(player, itemId, 1)) return;
-    addItem(player, 'gold', sellPrice);
+    const idx = player.items.findIndex(i => i.itemId === itemId);
+    if (idx < 0 || player.items[idx].qty <= 0) return;
+    player.items[idx].qty -= 1;
+    if (player.items[idx].qty <= 0) player.items.splice(idx, 1);
+    player.gold += sellPrice;
     setMsg(`出售了 ${item.name}（+${sellPrice} 金幣）`);
-    onPlayerUpdate();
+    onPlayerUpdate?.();
   }
 
   const tabBtn = (key, label) => (
@@ -71,45 +97,83 @@ export default function ShopPanel({ shopDef, player, onClose, onPlayerUpdate }) 
         </div>
       )}
 
-      {/* 購買列表 */}
+      {/* ── 購買列表 ── */}
       {tab === 'buy' && (
-        <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-          {shopDef.inventory.map(itemId => {
-            const item = ITEMS[itemId];
+        <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+          {shopDef.inventory.map(itemDef => {
+            const { itemId, price } = itemDef;
+            const item      = ITEMS[itemId];
             if (!item) return null;
-            const canAfford = player.gold >= item.value;
+
+            const stock     = shopStocks ? getStock(shopId, itemId, shopStocks) : Infinity;
+            const inStock   = stock > 0;
+            const canAfford = player.gold >= price && inStock;
+
+            // 製作進度
+            const remaining = craftingQueue
+              ? getCraftingProgress(shopId, itemId, craftingQueue, totalGameMins ?? 0)
+              : null;
+
             return (
               <div key={itemId} style={{
                 display: 'flex', alignItems: 'center', gap: 10,
                 padding: '7px 4px', borderBottom: '0.5px solid rgba(255,255,255,0.08)',
+                opacity: inStock ? 1 : 0.6,
               }}>
                 <span style={{ fontSize: 18, width: 24, textAlign: 'center' }}>{item.icon}</span>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, color: '#e8e8f0' }}>{item.name}</div>
-                  <div style={{ fontSize: 10, color: '#777', marginTop: 1 }}>{item.desc}</div>
+                  <div style={{ fontSize: 13, color: inStock ? '#e8e8f0' : '#888' }}>
+                    {item.name}
+                  </div>
+                  <div style={{ fontSize: 10, color: '#777', marginTop: 1 }}>
+                    {item.desc}
+                  </div>
+                  {/* 庫存 & 製作進度 */}
+                  <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+                    {shopStocks && (
+                      <span style={{
+                        fontSize: 10,
+                        color: inStock ? '#6090c0' : '#cc4444',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>
+                        {inStock ? `庫存 ${stock}/${itemDef.maxStock}` : '缺貨'}
+                      </span>
+                    )}
+                    {remaining !== null && remaining > 0 && (
+                      <span style={{ fontSize: 10, color: '#a07030' }}>
+                        ⏳ 補貨中 {fmtRemaining(remaining)}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <button onClick={() => buy(itemId)} disabled={!canAfford} style={{
-                  fontSize: 11, padding: '4px 10px', borderRadius: 5, cursor: canAfford ? 'pointer' : 'not-allowed',
-                  background: canAfford ? 'rgba(200,160,40,0.25)' : 'rgba(50,50,50,0.4)',
-                  border: `0.5px solid ${canAfford ? 'rgba(200,160,40,0.6)' : '#444'}`,
-                  color: canAfford ? '#ffd060' : '#666',
-                  whiteSpace: 'nowrap',
-                }}>{item.value} G</button>
+                <button
+                  onClick={() => handleBuy(itemId)}
+                  disabled={!canAfford}
+                  style={{
+                    fontSize: 11, padding: '4px 10px', borderRadius: 5,
+                    cursor: canAfford ? 'pointer' : 'not-allowed',
+                    background: canAfford ? 'rgba(200,160,40,0.25)' : 'rgba(50,50,50,0.4)',
+                    border: `0.5px solid ${canAfford ? 'rgba(200,160,40,0.6)' : '#444'}`,
+                    color: canAfford ? '#ffd060' : '#666',
+                    whiteSpace: 'nowrap',
+                  }}>
+                  {price} G
+                </button>
               </div>
             );
           })}
         </div>
       )}
 
-      {/* 出售列表 */}
+      {/* ── 出售列表 ── */}
       {tab === 'sell' && (
-        <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+        <div style={{ maxHeight: 240, overflowY: 'auto' }}>
           {player.items.length === 0 && (
             <div style={{ fontSize: 12, color: '#666', padding: '10px 0' }}>背包是空的</div>
           )}
           {player.items.map(({ itemId, qty }) => {
             const item = ITEMS[itemId];
-            if (!item || item.type === 'key' || item.type === 'quest') return null;
+            if (!item || item.type === 'key' || item.type === 'quest' || item.value <= 0) return null;
             const sellPrice = Math.floor(item.value * 0.5);
             return (
               <div key={itemId} style={{
@@ -119,8 +183,9 @@ export default function ShopPanel({ shopDef, player, onClose, onPlayerUpdate }) 
                 <span style={{ fontSize: 18, width: 24, textAlign: 'center' }}>{item.icon}</span>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, color: '#e8e8f0' }}>{item.name} ×{qty}</div>
+                  <div style={{ fontSize: 10, color: '#777', marginTop: 1 }}>{item.desc}</div>
                 </div>
-                <button onClick={() => sell(itemId)} style={{
+                <button onClick={() => handleSell(itemId)} style={{
                   fontSize: 11, padding: '4px 10px', borderRadius: 5, cursor: 'pointer',
                   background: 'rgba(80,120,80,0.3)', border: '0.5px solid rgba(80,180,80,0.5)',
                   color: '#88cc88', whiteSpace: 'nowrap',
