@@ -714,9 +714,114 @@ export default function MazeFirstPerson() {
     setActivePort(null);
   }
 
+  // ── 任務地城：找委託地點（NPC 所在城鎮 id）───
+  function getQuestGiverTownId(dialogueId) {
+    // 1. 世界遊走 NPC（有 homeTownId）
+    const npc = NPC_DEFS.find(n => n.dialogueId === dialogueId);
+    if (npc?.homeTownId) return npc.homeTownId;
+    // 2. 掃描固定地點的 fixedRooms / globalEvents
+    for (const loc of worldLocationsRef.current) {
+      const cfg = loc.dungeonCfg;
+      if (!cfg) continue;
+      for (const room of cfg.fixedRooms ?? []) {
+        if ((room.events ?? []).some(ev => ev.dialogueId === dialogueId)) return loc.id;
+      }
+      if ((cfg.globalEvents ?? []).some(ev => ev.dialogueId === dialogueId)) return loc.id;
+    }
+    return null;
+  }
+
+  // ── 任務地城：在城鎮附近找可用空地 ─────────
+  function findQuestDungeonSpawn(townId) {
+    const terrain = worldTerrainRef.current;
+    if (!terrain) return null;
+    const locs = worldLocationsRef.current;
+    const town = locs.find(l => l.id === townId);
+    if (!town) return null;
+    const tx = Math.floor(town.wx);
+    const ty = Math.floor(town.wy);
+    for (let d = 4; d <= 15; d++) {
+      for (let dy = -d; dy <= d; dy++) {
+        for (let dx = -d; dx <= d; dx++) {
+          if (Math.abs(dy) !== d && Math.abs(dx) !== d) continue;
+          const wx = tx + dx;
+          const wy = ty + dy;
+          if (!isPassable(terrain, wx + 0.5, wy + 0.5)) continue;
+          // 不與已有地點太近（距離 < 3 格）
+          const blocked = locs.some(l => Math.hypot((l.wx ?? 0) - wx, (l.wy ?? 0) - wy) < 3);
+          if (!blocked) return { wx, wy };
+        }
+      }
+    }
+    return null;
+  }
+
+  // ── 任務地城：依 enemyId + 數量建立地城 config ──
+  function buildQuestDungeonCfg(enemyId, killCount) {
+    const mobId  = (enemyId === 'goblin') ? 'skeleton' : 'goblin';
+    const targets = Array.from({ length: killCount + 1 }, (_, i) => ({
+      id: `qd_t${i}`, type: 'combat',
+      text: ENEMIES[enemyId]?.name ?? '怪物',
+      icon: '!', repeatable: true, triggered: false, enemyId,
+    }));
+    return {
+      cols: 5, rows: 5,
+      randomCount: 2, doorCount: 1, doorOpen: true,
+      ambient: 0.08, torchRadius: 5,
+      globalEvents: [
+        ...targets,
+        { id: 'qd_m0', type: 'combat', text: ENEMIES[mobId]?.name ?? '洞穴守衛', icon: '!', repeatable: false, triggered: false, enemyId: mobId },
+        { id: 'qd_m1', type: 'combat', text: ENEMIES[mobId]?.name ?? '洞穴守衛', icon: '!', repeatable: false, triggered: false, enemyId: mobId },
+        { id: 'qd_chest', type: 'chest', text: '遺落寶箱', icon: '📦', repeatable: false, triggered: false, itemId: 'health_potion', qty: 2 },
+      ],
+    };
+  }
+
+  // ── 任務地城：接任務後生成地圖入口 ─────────
+  function spawnQuestDungeon(questDef) {
+    const killStep = questDef.steps.find(s => s.type === 'kill');
+    if (!killStep) return;
+    const existingId = `quest_dungeon_${questDef.id}`;
+    if (worldLocationsRef.current.some(l => l.id === existingId)) return; // 已存在
+    const townId = getQuestGiverTownId(questDef.giverNpcId);
+    if (!townId) return;
+    const spawn = findQuestDungeonSpawn(townId);
+    if (!spawn) return;
+    const loc = {
+      id: existingId,
+      type: LOC_TYPE.QUEST_DUNGEON,
+      label: `${questDef.title}・討伐地城`,
+      wx: spawn.wx,
+      wy: spawn.wy,
+      questId: questDef.id,
+      dungeonCfg: buildQuestDungeonCfg(killStep.enemyId, killStep.count),
+    };
+    worldLocationsRef.current = [...worldLocationsRef.current, loc];
+    addToast({ type: 'quest', icon: '⚔️', title: '討伐地城已開放', body: '地圖上出現了任務地城', duration: 3000 });
+  }
+
+  // ── 任務地城：討伐完成後移除入口 ───────────
+  function removeQuestDungeon(questId) {
+    const id = `quest_dungeon_${questId}`;
+    worldLocationsRef.current = worldLocationsRef.current.filter(l => l.id !== id);
+  }
+
   // ── 離開地城，返回大地圖 ───────────────────
   function doExitToOverworld() {
     const s = g.current;
+    // 若從任務地城離開，檢查 kill 步驟是否完成 → 移除地城入口
+    const activeLoc = worldLocationsRef.current.find(l => l.id === s.activeLocationId);
+    if (activeLoc?.type === LOC_TYPE.QUEST_DUNGEON && activeLoc.questId) {
+      const qId   = activeLoc.questId;
+      const qDef  = QUEST_DEFS.find(d => d.id === qId);
+      const qState = playerRef.current.quests.find(q => q.questId === qId);
+      if (qDef && qState) {
+        const killIdx = qDef.steps.findIndex(st => st.type === 'kill');
+        if (killIdx >= 0 && (qState.stepIdx > killIdx || qState.completed)) {
+          removeQuestDungeon(qId);
+        }
+      }
+    }
     s.gameMode = 'OVERWORLD';
     s.wx = s.returnWX; s.wy = s.returnWY;
     s.activeLocationId = null;
@@ -1516,6 +1621,8 @@ export default function MazeFirstPerson() {
         addQuest(playerRef.current, def, g.current.totalGameMins);
         setQuestLog(playerRef.current.quests.map(q => ({ ...q })));
         addToast({ type: 'quest', icon: '📜', title: `接受任務：${def.title}`, duration: 2500 });
+        // 若有 kill 步驟，在委託城鎮附近生成任務地城
+        spawnQuestDungeon(def);
       }
       continueDialogue?.();           // 繼續 / 關閉對話
     } else {
@@ -1620,6 +1727,24 @@ export default function MazeFirstPerson() {
         const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
         s.px = sp.px; s.py = sp.py;
       }
+
+      // 若在任務地城內戰勝 → 檢查 kill 步驟是否完成，完成即關閉地城入口
+      if (result?.won) {
+        const activeLoc = worldLocationsRef.current.find(l => l.id === g.current.activeLocationId);
+        if (activeLoc?.type === LOC_TYPE.QUEST_DUNGEON && activeLoc.questId) {
+          const qId    = activeLoc.questId;
+          const qDef   = QUEST_DEFS.find(d => d.id === qId);
+          const qState = p.quests.find(q => q.questId === qId);
+          if (qDef && qState) {
+            const killIdx = qDef.steps.findIndex(st => st.type === 'kill');
+            if (killIdx >= 0 && (qState.stepIdx > killIdx || qState.completed)) {
+              removeQuestDungeon(qId);
+              addToast({ type: 'quest', icon: '⚔️', title: '討伐目標達成！', body: '地城入口已關閉', duration: 2500 });
+            }
+          }
+        }
+      }
+
       setPlayerStats({ ...p });
       setQuestLog(p.quests.map(q => ({ ...q })));
     });

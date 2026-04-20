@@ -42,25 +42,27 @@ const NO_PIXEL_BORDER = new Set([TERRAIN.ROAD, TERRAIN.DEEP_WATER]);
 
 // 地點顏色與圖示
 const LOC_COLORS = {
-  [LOC_TYPE.TOWN]:       { bg: '#f0c040', border: '#c08010', text: '#2a1800' },
-  [LOC_TYPE.TOWN_SMALL]: { bg: '#c8a870', border: '#907040', text: '#2a1800' },
-  [LOC_TYPE.CAVE]:       { bg: '#806040', border: '#503018', text: '#f0d0a0' },
-  [LOC_TYPE.TOWER]:      { bg: '#8040c0', border: '#5020a0', text: '#f0d0ff' },
-  [LOC_TYPE.DUNGEON]:    { bg: '#c03030', border: '#901010', text: '#ffd0d0' },
-  [LOC_TYPE.CAPITAL]:    { bg: '#ffe060', border: '#c07800', text: '#1a1000' },
-  [LOC_TYPE.TEMPLE]:     { bg: '#40a0c0', border: '#207090', text: '#e0f4ff' },
-  [LOC_TYPE.PORT]:       { bg: '#2080c0', border: '#104080', text: '#d0f0ff' },
+  [LOC_TYPE.TOWN]:          { bg: '#f0c040', border: '#c08010', text: '#2a1800' },
+  [LOC_TYPE.TOWN_SMALL]:    { bg: '#c8a870', border: '#907040', text: '#2a1800' },
+  [LOC_TYPE.CAVE]:          { bg: '#806040', border: '#503018', text: '#f0d0a0' },
+  [LOC_TYPE.TOWER]:         { bg: '#8040c0', border: '#5020a0', text: '#f0d0ff' },
+  [LOC_TYPE.DUNGEON]:       { bg: '#c03030', border: '#901010', text: '#ffd0d0' },
+  [LOC_TYPE.CAPITAL]:       { bg: '#ffe060', border: '#c07800', text: '#1a1000' },
+  [LOC_TYPE.TEMPLE]:        { bg: '#40a0c0', border: '#207090', text: '#e0f4ff' },
+  [LOC_TYPE.PORT]:          { bg: '#2080c0', border: '#104080', text: '#d0f0ff' },
+  [LOC_TYPE.QUEST_DUNGEON]: { bg: '#c06020', border: '#904000', text: '#ffeecc' },
 };
 
 const LOC_ICONS = {
-  [LOC_TYPE.TOWN]:       '鎮',
-  [LOC_TYPE.TOWN_SMALL]: '村',
-  [LOC_TYPE.CAVE]:       '穴',
-  [LOC_TYPE.TOWER]:      '塔',
-  [LOC_TYPE.DUNGEON]:    '洞',
-  [LOC_TYPE.CAPITAL]:    '都',
-  [LOC_TYPE.TEMPLE]:     '殿',
-  [LOC_TYPE.PORT]:       '港',
+  [LOC_TYPE.TOWN]:          '鎮',
+  [LOC_TYPE.TOWN_SMALL]:    '村',
+  [LOC_TYPE.CAVE]:          '穴',
+  [LOC_TYPE.TOWER]:         '塔',
+  [LOC_TYPE.DUNGEON]:       '洞',
+  [LOC_TYPE.CAPITAL]:       '都',
+  [LOC_TYPE.TEMPLE]:        '殿',
+  [LOC_TYPE.PORT]:          '港',
+  [LOC_TYPE.QUEST_DUNGEON]: '⚔',
 };
 
 // 國家標籤顏色
