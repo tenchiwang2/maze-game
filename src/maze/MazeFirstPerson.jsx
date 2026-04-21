@@ -21,6 +21,7 @@ import { createPlayer, addItem, addQuest, claimReward, checkQuestStep, checkExpi
 import {
   initShopStocks, checkRestockNeeds, processCraftingQueue,
   generateSupplyQuests, acceptSupplyQuest, tryDeliverSupplyQuests, checkExpiredSupplyQuests,
+  assignNpcJobs, processNpcJobs,
   initResourceNodes, getNearbyResourceNode, harvestNode,
 } from './supplySystem.js';
 import QuestOfferPanel from './QuestOfferPanel.jsx';
@@ -556,6 +557,8 @@ export default function MazeFirstPerson() {
   const craftingQueueRef = useRef([]);
   // 供應鏈：補貨任務
   const supplyQuestsRef  = useRef([]);
+  // 供應鏈：NPC 工作佇列
+  const npcJobsRef       = useRef([]);
   // 採集節點狀態
   const resourceNodesRef = useRef(initResourceNodes());
 
@@ -1129,13 +1132,24 @@ export default function MazeFirstPerson() {
                 addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 })
               );
             }
-            // 供應鏈：補貨任務生成 + 逾時檢查 + 自動補貨兜底
+            // 供應鏈：補貨任務生成 + NPC 接單 + 逾時檢查 + 自動補貨兜底
             {
               // 新增補貨任務
               const newSQ = generateSupplyQuests(shopStocksRef.current, supplyQuestsRef.current, s.totalGameMins);
               for (const q of newSQ) supplyQuestsRef.current.push(q);
               // 補貨任務逾時 → 退回市場
               checkExpiredSupplyQuests(supplyQuestsRef.current, s.totalGameMins);
+              // NPC 自動接取（12 小時後無玩家接單）
+              const newNpcJobs = assignNpcJobs(supplyQuestsRef.current, npcJobsRef.current, s.totalGameMins);
+              for (const j of newNpcJobs) {
+                npcJobsRef.current.push(j);
+                addToast({ type: 'npc', icon: j.npcIcon, title: `${j.npcName} 接下補貨任務`, body: `${j.shopName} ${j.itemIcon}${j.itemName}`, duration: 2200 });
+              }
+              // NPC 完成工作
+              const npcDone = processNpcJobs(shopStocksRef.current, npcJobsRef.current, supplyQuestsRef.current, craftingQueueRef.current, s.totalGameMins);
+              for (const j of npcDone) {
+                addToast({ type: 'item', icon: j.npcIcon, title: `${j.npcName} 完成補貨！`, body: `${j.shopName} ${j.itemIcon}${j.itemName} ×${j.outputQty} 已補充`, duration: 2800 });
+              }
               // 自動補貨兜底（2 天後無人接單才啟動）
               const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, supplyQuestsRef.current, s.totalGameMins);
               for (const j of newJobs) craftingQueueRef.current.push(j);
@@ -1250,11 +1264,20 @@ export default function MazeFirstPerson() {
               addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 })
             );
           }
-          // 供應鏈：補貨任務 + 自動補貨（地城內也流逝時間）
+          // 供應鏈：補貨任務 + NPC + 自動補貨（地城內也流逝時間）
           {
             const newSQ = generateSupplyQuests(shopStocksRef.current, supplyQuestsRef.current, s.totalGameMins);
             for (const q of newSQ) supplyQuestsRef.current.push(q);
             checkExpiredSupplyQuests(supplyQuestsRef.current, s.totalGameMins);
+            const newNpcJobs = assignNpcJobs(supplyQuestsRef.current, npcJobsRef.current, s.totalGameMins);
+            for (const j of newNpcJobs) {
+              npcJobsRef.current.push(j);
+              addToast({ type: 'npc', icon: j.npcIcon, title: `${j.npcName} 接下補貨任務`, body: `${j.shopName} ${j.itemIcon}${j.itemName}`, duration: 2200 });
+            }
+            const npcDone = processNpcJobs(shopStocksRef.current, npcJobsRef.current, supplyQuestsRef.current, craftingQueueRef.current, s.totalGameMins);
+            for (const j of npcDone) {
+              addToast({ type: 'item', icon: j.npcIcon, title: `${j.npcName} 完成補貨！`, body: `${j.shopName} ${j.itemIcon}${j.itemName} ×${j.outputQty} 已補充`, duration: 2800 });
+            }
             const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, supplyQuestsRef.current, s.totalGameMins);
             for (const j of newJobs) craftingQueueRef.current.push(j);
             processCraftingQueue(shopStocksRef.current, craftingQueueRef.current, s.totalGameMins);
@@ -1946,6 +1969,7 @@ export default function MazeFirstPerson() {
               shopStocks={shopStocksRef.current}
               craftingQueue={craftingQueueRef.current}
               supplyQuests={supplyQuestsRef.current}
+              npcJobs={npcJobsRef.current}
               totalGameMins={g.current.totalGameMins}
               onClose={closeShop}
               onBuy={() => {

@@ -10,6 +10,9 @@ import {
   acceptSupplyQuest, getPlayerResourceQty,
 } from './supplySystem.js';
 
+// NPC job 進度條顏色
+const NPC_PROGRESS_BG = 'rgba(80,200,120,0.15)';
+
 const PANEL = {
   position: 'absolute', top: '50%', left: '50%',
   transform: 'translate(-50%, -50%)',
@@ -38,6 +41,7 @@ export default function ShopPanel({
   shopStocks,
   craftingQueue,
   supplyQuests,
+  npcJobs,
   totalGameMins,
   onClose,
   onBuy,
@@ -83,12 +87,17 @@ export default function ShopPanel({
   }
 
   // ── 補貨任務列表 ──
+  // 補貨任務（open + accepted，不含 npc_accepted）
   const shopSupplyQuests = (supplyQuests ?? []).filter(
-    q => q.shopId === shopId && q.status !== 'done'
+    q => q.shopId === shopId && (q.status === 'open' || q.status === 'accepted')
+  );
+  // NPC 進行中的工作
+  const shopNpcJobs = (npcJobs ?? []).filter(
+    j => j.shopId === shopId && j.status === 'working'
   );
   const openCount     = shopSupplyQuests.filter(q => q.status === 'open').length;
   const acceptedCount = shopSupplyQuests.filter(q => q.status === 'accepted').length;
-  const supplyBadge   = openCount + acceptedCount;
+  const supplyBadge   = openCount + acceptedCount + shopNpcJobs.length;
 
   const tabBtn = (key, label, badge = 0) => (
     <button onClick={() => setTab(key)} style={{
@@ -212,11 +221,6 @@ export default function ShopPanel({
       {/* ── 補貨任務 ── */}
       {tab === 'supply' && (
         <div style={{ maxHeight: 280, overflowY: 'auto' }}>
-          {shopSupplyQuests.length === 0 && (
-            <div style={{ fontSize: 12, color: '#505060', padding: '16px 0', textAlign: 'center' }}>
-              目前無補貨需求
-            </div>
-          )}
           {shopSupplyQuests.map(q => {
             const accepted = q.status === 'accepted';
             const haveQty  = getPlayerResourceQty(player, q.resourceId);
@@ -304,6 +308,70 @@ export default function ShopPanel({
               </div>
             );
           })}
+
+          {/* ── NPC 補貨進行中 ── */}
+          {shopNpcJobs.length > 0 && (
+            <div style={{ marginTop: shopSupplyQuests.length > 0 ? 8 : 0 }}>
+              <div style={{
+                fontSize: 10, color: '#507050', letterSpacing: '0.08em',
+                textTransform: 'uppercase', padding: '6px 0 4px',
+                borderTop: shopSupplyQuests.length > 0 ? '0.5px solid rgba(255,255,255,0.06)' : 'none',
+              }}>
+                NPC 補貨進行中
+              </div>
+              {shopNpcJobs.map(job => {
+                const remaining   = Math.max(0, job.dueAt - (totalGameMins ?? 0));
+                const totalMins   = job.dueAt - (job.dueAt - job.outputQty * 0); // placeholder
+                // 進度百分比（用 craftDays 估算）
+                const questDef    = (supplyQuests ?? []).find(q => q.id === job.questId);
+                const totalDuration = (questDef?.craftDays ?? 1) * 1440;
+                const elapsed     = totalDuration - remaining;
+                const pct         = Math.min(100, Math.round(elapsed / totalDuration * 100));
+
+                return (
+                  <div key={job.id} style={{
+                    padding: '8px 0',
+                    borderBottom: '0.5px solid rgba(255,255,255,0.06)',
+                  }}>
+                    {/* NPC 名稱 + 商品 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                      <span style={{ fontSize: 18 }}>{job.npcIcon}</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, color: '#c0d0c0' }}>{job.npcName}</div>
+                        <div style={{ fontSize: 10, color: '#607060' }}>
+                          正在補充 {job.itemIcon}{job.itemName} ×{job.outputQty}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 11, color: '#608060', whiteSpace: 'nowrap' }}>
+                        ⏳ {fmtMins(remaining)}
+                      </span>
+                    </div>
+                    {/* 進度條 */}
+                    <div style={{
+                      height: 4, borderRadius: 2,
+                      background: 'rgba(255,255,255,0.08)',
+                      overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        height: '100%', width: `${pct}%`,
+                        background: 'rgba(80,200,100,0.6)',
+                        transition: 'width 0.3s',
+                      }} />
+                    </div>
+                    <div style={{ fontSize: 9, color: '#405040', marginTop: 2, textAlign: 'right' }}>
+                      {pct}% 完成
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {shopSupplyQuests.length === 0 && shopNpcJobs.length === 0 && (
+            <div style={{ fontSize: 12, color: '#505060', padding: '16px 0', textAlign: 'center' }}>
+              目前無補貨需求
+            </div>
+          )}
         </div>
       )}
 

@@ -53,9 +53,10 @@ export function checkRestockNeeds(shopStocks, craftingQueue, supplyQuests, total
       // 已有製作任務 → 跳過
       if (craftingQueue.some(j => j.shopId === shopId && j.itemId === item.itemId)) continue;
 
-      // 玩家已接補貨任務 → 等交付，不自動補
+      // 玩家或 NPC 已接補貨任務 → 等交付，不自動補
       if (supplyQuests?.some(q =>
-        q.shopId === shopId && q.itemId === item.itemId && q.status === 'accepted'
+        q.shopId === shopId && q.itemId === item.itemId &&
+        (q.status === 'accepted' || q.status === 'npc_accepted')
       )) continue;
 
       // 公開任務發布不滿 2 天 → 等玩家接單
@@ -277,6 +278,110 @@ export function getDeliverableQuests(player, shopId, supplyQuests) {
 // 取得玩家持有的資源數量（供 UI 顯示）
 export function getPlayerResourceQty(player, resourceId) {
   return player.items.find(i => i.itemId === resourceId)?.qty ?? 0;
+}
+
+// ═════════════════════════════════════════════
+//  NPC 自動補貨 — Phase 4
+//
+//  status 流程：open（未有玩家接）→ npc_accepted → done
+//  npcJobs 格式：[{
+//    id, questId, shopId, shopName, itemId, itemIcon, itemName,
+//    outputQty, maxStock, npcName, npcIcon, dueAt, doneAt, status
+//  }]
+// ═════════════════════════════════════════════
+
+// NPC 工作者池（依資源類型分類，反映各國風情）
+const NPC_WORKER_POOL = {
+  wild_herb:       [{ name: '草藥農夫阿明', icon: '👨‍🌾' }, { name: '藥草師小蓮', icon: '🌿' }, { name: '村民老趙', icon: '🧑‍🌾' }],
+  iron_ore:        [{ name: '礦工老鐵', icon: '⛏️' },   { name: '鐵匠大壯', icon: '🔨' }, { name: '礦場工頭張三', icon: '👷' }],
+  cactus_gel:      [{ name: '沙漠採集者沙里', icon: '🌵' }, { name: '行腳商卡里姆', icon: '🧔' }, { name: '沙漠嚮導法魯克', icon: '🏜️' }],
+  desert_stone:    [{ name: '砂石工匠阿卜杜', icon: '🪨' }, { name: '礦場工頭哈珊', icon: '⛏️' }, { name: '沙漠勞工伊布拉', icon: '👷' }],
+  frost_flower:    [{ name: '雪域採集者艾薇', icon: '❄️' }, { name: '霜地農婦冰兒', icon: '🌸' }, { name: '雪嶺村民席芙', icon: '🧝‍♀️' }],
+  ice_crystal_ore: [{ name: '冰晶礦工托爾', icon: '💎' }, { name: '雪域鑄師芙蕾', icon: '🔧' }, { name: '凍原礦師葛納', icon: '⛏️' }],
+};
+
+function pickNpcWorker(resourceId) {
+  const pool = NPC_WORKER_POOL[resourceId] ?? [{ name: '無名工人', icon: '👷' }];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+let _npcJobCounter = 0;
+
+// NPC 自動接取已發布但無人接的補貨任務
+// graceMins: 發布後多久才允許 NPC 介入（預設 720 = 12 遊戲小時）
+// 回傳新增的 npcJob 陣列（呼叫方 push 到 npcJobs）
+export function assignNpcJobs(supplyQuests, npcJobs, totalGameMins, graceMins = 720) {
+  const newJobs = [];
+
+  for (const q of supplyQuests) {
+    if (q.status !== 'open') continue;                          // 只接 open 的
+    if (totalGameMins - q.postedAt < graceMins) continue;      // 等待玩家優先期
+    if (npcJobs.some(j => j.questId === q.id)) continue;       // 已有對應 job
+
+    const worker  = pickNpcWorker(q.resourceId);
+    const maxStock = SHOPS[q.shopId]?.inventory.find(i => i.itemId === q.itemId)?.maxStock ?? 8;
+
+    // 標記任務為 NPC 接取
+    q.status     = 'npc_accepted';
+    q.acceptedAt = totalGameMins;
+
+    newJobs.push({
+      id:        `npcjob_${++_npcJobCounter}`,
+      questId:   q.id,
+      shopId:    q.shopId,
+      shopName:  q.shopName,
+      itemId:    q.itemId,
+      itemIcon:  q.itemIcon,
+      itemName:  q.itemName,
+      outputQty: q.outputQty,
+      maxStock,
+      npcName:   worker.name,
+      npcIcon:   worker.icon,
+      dueAt:     totalGameMins + q.craftDays * 1440,
+      doneAt:    null,
+      status:    'working',
+    });
+  }
+
+  return newJobs;
+}
+
+// 處理到期的 NPC 工作：補充庫存、標記任務完成
+// 回傳完成的 job 陣列（用於 toast 通知）
+export function processNpcJobs(shopStocks, npcJobs, supplyQuests, craftingQueue, totalGameMins) {
+  const completed = [];
+
+  for (const job of npcJobs) {
+    if (job.status !== 'working' || totalGameMins < job.dueAt) continue;
+
+    // 補充庫存
+    const current = shopStocks[job.shopId]?.[job.itemId] ?? 0;
+    if (shopStocks[job.shopId]) {
+      shopStocks[job.shopId][job.itemId] = Math.min(current + job.outputQty, job.maxStock);
+    }
+
+    // 取消對應的自動補貨 job（避免雙重補貨）
+    const jIdx = craftingQueue.findIndex(j => j.shopId === job.shopId && j.itemId === job.itemId);
+    if (jIdx >= 0) craftingQueue.splice(jIdx, 1);
+
+    // 標記對應補貨任務為完成
+    const quest = supplyQuests.find(q => q.id === job.questId);
+    if (quest) quest.status = 'done';
+
+    job.status = 'done';
+    job.doneAt = totalGameMins;
+    completed.push(job);
+  }
+
+  // 清除已完成超過 1 天的舊 job（避免無限累積）
+  for (let i = npcJobs.length - 1; i >= 0; i--) {
+    const j = npcJobs[i];
+    if (j.status === 'done' && j.doneAt != null && (totalGameMins - j.doneAt) > 1440) {
+      npcJobs.splice(i, 1);
+    }
+  }
+
+  return completed;
 }
 
 // ═════════════════════════════════════════════
