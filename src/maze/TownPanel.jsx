@@ -46,6 +46,7 @@ const GROUPS = [
   { key: 'shop',        label: '地點', icon: '$', color: '#ffd060' },
   { key: 'port_travel', label: '航行', icon: '⚓', color: '#60c8ff' },
   { key: 'chest',       label: '寶箱', icon: 'T', color: '#a0e898' },
+  { key: 'gather',      label: '採集', icon: '🌿', color: '#60d090' },
   { key: 'combat',      label: '戰鬥', icon: '!', color: '#ff8888' },
 ];
 

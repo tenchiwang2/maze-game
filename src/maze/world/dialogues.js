@@ -11,8 +11,9 @@ export const DIALOGUES = {
     { speaker: '公會長', text: '歡迎來到冒險者公會！這裡有各種委託任務等待完成。' },
     { speaker: '公會長', text: '建議新手先去河畔城或東港城熟悉環境。霜城要塞的冰雪狼很危險，要做好充分準備再去。' },
     { speaker: '公會長', text: '我這裡有幾個委託，你有興趣接嗎？', choices: [
-      { text: '我想接「公會入會試煉」', questOffer: 'quest_guild_trial', next: null },
-      { text: '我想接「古代神殿的秘密」', questOffer: 'quest_temple', next: null },
+      { text: '我想接「公會入會試煉」',   questOffer: 'quest_guild_trial',  next: null },
+      { text: '我想接「古代神殿的秘密」', questOffer: 'quest_temple',       next: null },
+      { text: '我想接「遺跡碎片蒐集」',   questOffer: 'quest_relic_study',  next: null },
       { text: '不了，謝謝。', next: null },
     ]},
   ],
@@ -25,7 +26,8 @@ export const DIALOGUES = {
   harbor_captain: [
     { speaker: '港口長', text: '歡迎來到東港城！我們是亞薩王國最繁忙的港口。' },
     { speaker: '港口長', text: '最近哥布林在附近活動猖獗，嚴重影響貿易。我正在找人幫忙解決這個麻煩。', choices: [
-      { text: '我來幫忙！（接受護衛任務）', questOffer: 'quest_harbor_guard', next: null },
+      { text: '我來幫忙！（接受護衛任務）', questOffer: 'quest_harbor_guard',   next: null },
+      { text: '我可以採集洞穴蘑菇！',       questOffer: 'quest_cave_mushroom', next: null },
       { text: '多謝提醒，保重。', next: null },
     ]},
   ],
@@ -175,7 +177,8 @@ export const DIALOGUES = {
   npc_shaman: [
     { speaker: '沙漠祭司', text: '沙漠之神告訴我，你是一個命運特殊的旅人。' },
     { speaker: '沙漠祭司', text: '我感應到古代神殿的封印出現了裂縫……黑暗正在滲透。我需要一個勇者前往確認。', choices: [
-      { text: '我可以去調查。', questOffer: 'quest_shaman_ritual', next: null },
+      { text: '我可以去調查。',     questOffer: 'quest_shaman_ritual', next: null },
+      { text: '我去採集火焰原石！', questOffer: 'quest_fire_stone',    next: null },
       { text: '感謝指引，我考慮看看。', next: null },
     ]},
   ],

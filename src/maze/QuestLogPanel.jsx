@@ -258,13 +258,11 @@ export default function QuestLogPanel({ questLog, questDefs, totalGameMins = 0, 
                   {selectedDef.steps.map((step, i) => {
                     const status = stepStatus(selectedQ, i);
                     const st = STEP_STATUS[status];
-                    // kill 步驟：所有狀態都顯示進度計數
-                    const isKill = step.type === 'kill';
-                    const killProgress = isKill ? (selectedQ.progress?.[i] ?? 0) : null;
-                    const killDone     = isKill && status === 'done';
-                    const killCount    = isKill
-                      ? (killDone ? step.count : killProgress)
-                      : null;
+                    // kill / collect 步驟都顯示進度計數
+                    const hasCount = (step.type === 'kill' || step.type === 'collect') && step.count > 0;
+                    const isDone   = hasCount && status === 'done';
+                    const current  = hasCount ? (selectedQ.progress?.[i] ?? 0) : null;
+                    const display  = hasCount ? (isDone ? step.count : current) : null;
                     return (
                       <div key={i} style={{
                         display: 'flex', gap: 8, fontSize: 13,
@@ -274,12 +272,12 @@ export default function QuestLogPanel({ questLog, questDefs, totalGameMins = 0, 
                       }}>
                         <span style={{ flexShrink: 0, width: 14, textAlign: 'center' }}>{st.icon}</span>
                         <span style={{ flex: 1 }}>{step.desc}</span>
-                        {isKill && (
+                        {hasCount && (
                           <span style={{
-                            color: killDone ? '#60cc80' : '#f0c040',
+                            color: isDone ? '#60cc80' : '#f0c040',
                             flexShrink: 0, fontVariantNumeric: 'tabular-nums',
                           }}>
-                            {killCount}/{step.count}
+                            {display}/{step.count}
                           </span>
                         )}
                       </div>

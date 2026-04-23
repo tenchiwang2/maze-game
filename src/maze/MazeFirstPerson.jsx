@@ -66,6 +66,7 @@ function shuffleArr(arr) {
 /**
  * 將 globalEvents（無 r,c）自動配置到死路或房間空格。
  * - chest    → placed 陣列（加上 r,c，供 resolveEvents 使用）
+ * - gather   → placed 陣列（採集節點，靜態放置在死路）
  * - combat   → enemies 陣列（成為可移動敵人實體）
  * - 其他     → 保留進 placed
  * @returns {{ placed: object[], enemies: object[] }}
@@ -91,10 +92,10 @@ function autoPlaceGlobalEvents(rawGlobal, grid, rooms, rows, cols, ENEMIES_DEF) 
   const enemies = [];
 
   rawGlobal.forEach(ev => {
-    if (ev.type === 'chest') {
+    if (ev.type === 'chest' || ev.type === 'gather') {
+      // chest 和 gather 都放置在死路或空格（靜態互動節點）
       const pos = candidates[cidx];
       if (pos) { used.add(`${pos.r},${pos.c}`); cidx++; placed.push({ ...ev, r: pos.r, c: pos.c }); }
-      // 若找不到格子，此寶箱跳過（避免塞在牆裡）
     } else if (ev.type === 'combat' && ev.enemyId) {
       // 成為遊走敵人
       const pos = candidates[cidx];
@@ -649,8 +650,30 @@ export default function MazeFirstPerson() {
         body: qty > 1 ? `×${qty}` : item?.desc,
         duration: 3000,
       });
-      // 任務：collect 進度
-      QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'collect', { itemId: ev.itemId }));
+      // 任務：collect 進度（qty 傳入供累計計算）
+      QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'collect', { itemId: ev.itemId, qty }));
+      setQuestLog(p.quests.map(q => ({ ...q })));
+      g.current.gameTime = advanceTime(g.current.gameTime, TIME_CHEST);
+      setGameTime(g.current.gameTime);
+    }
+    if (ev.type === 'gather') {
+      const p = playerRef.current;
+      const qty = ev.qty ?? 1;
+      addItem(p, ev.itemId, qty);
+      const item = ITEMS[ev.itemId];
+      const itemName = item?.name || ev.itemId;
+      setLog(prev => [{ id: Date.now() + 1, type: 'gather', text: `採集 ${itemName} ×${qty}` }, ...prev].slice(0, 30));
+      setPlayerStats({ ...p });
+      addToast({
+        type: 'chest',
+        icon: item?.icon ?? '🌿',
+        title: `採集：${itemName}`,
+        body: `×${qty}`,
+        duration: 2500,
+      });
+      // 任務：collect 進度（含 qty 供累計）
+      QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'collect', { itemId: ev.itemId, qty }));
+      setQuestLog(p.quests.map(q => ({ ...q })));
       g.current.gameTime = advanceTime(g.current.gameTime, TIME_CHEST);
       setGameTime(g.current.gameTime);
     }
@@ -772,12 +795,13 @@ export default function MazeFirstPerson() {
   }
 
   // ── 任務地城：依 enemyId + 數量建立地城 config ──
-  function buildQuestDungeonCfg(enemyId, killCount) {
+  function buildQuestDungeonCfg(enemyId, killCount, questId = 'qd') {
     const mobId = (enemyId === 'goblin') ? 'skeleton' : 'goblin';
     // 7×7 迷宮（grid 15×15）通常有 12–18 個死路，足以放下所有事件
     // 目標敵人數量 = killCount * 2，確保重複進入也夠殺
+    // questId 作為事件 ID 前綴，避免不同任務地城的 ID 衝突
     const targets = Array.from({ length: killCount * 2 }, (_, i) => ({
-      id: `qd_t${i}`, type: 'combat',
+      id: `${questId}_t${i}`, type: 'combat',
       text: ENEMIES[enemyId]?.name ?? '怪物',
       icon: '!', repeatable: false, triggered: false, enemyId,
     }));
@@ -787,11 +811,11 @@ export default function MazeFirstPerson() {
       ambient: 0.08, torchRadius: 6,
       globalEvents: [
         ...targets,
-        { id: 'qd_m0', type: 'combat', text: ENEMIES[mobId]?.name ?? '洞穴守衛', icon: '!', repeatable: false, triggered: false, enemyId: mobId },
-        { id: 'qd_m1', type: 'combat', text: ENEMIES[mobId]?.name ?? '洞穴守衛', icon: '!', repeatable: false, triggered: false, enemyId: mobId },
-        { id: 'qd_m2', type: 'combat', text: ENEMIES[mobId]?.name ?? '洞穴守衛', icon: '!', repeatable: false, triggered: false, enemyId: mobId },
-        { id: 'qd_chest0', type: 'chest', text: '遺落寶箱', icon: '📦', repeatable: false, triggered: false, itemId: 'health_potion', qty: 2 },
-        { id: 'qd_chest1', type: 'chest', text: '深處寶箱', icon: '📦', repeatable: false, triggered: false, itemId: 'health_potion', qty: 1 },
+        { id: `${questId}_m0`, type: 'combat', text: ENEMIES[mobId]?.name ?? '洞穴守衛', icon: '!', repeatable: false, triggered: false, enemyId: mobId },
+        { id: `${questId}_m1`, type: 'combat', text: ENEMIES[mobId]?.name ?? '洞穴守衛', icon: '!', repeatable: false, triggered: false, enemyId: mobId },
+        { id: `${questId}_m2`, type: 'combat', text: ENEMIES[mobId]?.name ?? '洞穴守衛', icon: '!', repeatable: false, triggered: false, enemyId: mobId },
+        { id: `${questId}_chest0`, type: 'chest', text: '遺落寶箱', icon: '📦', repeatable: false, triggered: false, itemId: 'health_potion', qty: 2 },
+        { id: `${questId}_chest1`, type: 'chest', text: '深處寶箱', icon: '📦', repeatable: false, triggered: false, itemId: 'health_potion', qty: 1 },
       ],
     };
   }
@@ -802,8 +826,28 @@ export default function MazeFirstPerson() {
     if (!killStep) return;
     const existingId = `quest_dungeon_${questDef.id}`;
     if (worldLocationsRef.current.some(l => l.id === existingId)) return; // 已存在
-    const townId = getQuestGiverTownId(questDef.giverNpcId);
+
+    // 優先使用 kill 步驟前的 reach 步驟作為地城生成位置（符合任務敘事）
+    // 例如 quest_ice_crystal 的 reach:town_icelake → 地城生成在冰湖城附近
+    const killIdx = questDef.steps.indexOf(killStep);
+    const precedingReach = questDef.steps
+      .slice(0, killIdx)
+      .reverse()
+      .find(s => s.type === 'reach');
+
+    // 若 precedingReach 指向已存在的地城入口（DUNGEON/CAVE/TOWER/TEMPLE），
+    // 代表 kill 步驟在該地城內完成，不需另外生成任務地城
+    // 例如 quest_volcano 的 reach:dungeon_volcano → 玩家直接進入火山地城打 boss
+    if (precedingReach) {
+      const reachLoc = worldLocationsRef.current.find(l => l.id === precedingReach.locationId);
+      const isDungeonType = [LOC_TYPE.DUNGEON, LOC_TYPE.CAVE, LOC_TYPE.TOWER, LOC_TYPE.TEMPLE]
+        .includes(reachLoc?.type);
+      if (isDungeonType) return;
+    }
+
+    const townId = precedingReach?.locationId ?? getQuestGiverTownId(questDef.giverNpcId);
     if (!townId) return;
+
     const spawn = findQuestDungeonSpawn(townId);
     if (!spawn) return;
     const loc = {
@@ -813,7 +857,7 @@ export default function MazeFirstPerson() {
       wx: spawn.wx,
       wy: spawn.wy,
       questId: questDef.id,
-      dungeonCfg: buildQuestDungeonCfg(killStep.enemyId, killStep.count),
+      dungeonCfg: buildQuestDungeonCfg(killStep.enemyId, killStep.count, questDef.id),
     };
     worldLocationsRef.current = [...worldLocationsRef.current, loc];
     addToast({ type: 'quest', icon: '⚔️', title: '討伐地城已開放', body: '地圖上出現了任務地城', duration: 3000 });
@@ -978,6 +1022,7 @@ export default function MazeFirstPerson() {
     // 任務進度：reach
     const p = playerRef.current;
     QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'reach', { locationId: loc.id }));
+    setQuestLog(p.quests.map(q => ({ ...q })));
   }
 
   function toggleDoor(idx) {
@@ -1289,7 +1334,7 @@ export default function MazeFirstPerson() {
       const PORTAL_RADIUS = 1.0;
       const onExitPortal  = Math.hypot(s.px - (s.exitGX  + 0.5), s.py - (s.exitGY  + 0.5)) < PORTAL_RADIUS;
       const onEntryPortal = Math.hypot(s.px - (s.entryGX + 0.5), s.py - (s.entryGY + 0.5)) < PORTAL_RADIUS
-        && (s.multiMap ? s.currentMapIdx > 0 : s.gameMode === 'DUNGEON_INTERIOR');
+        && (s.multiMap || s.gameMode === 'DUNGEON_INTERIOR');
 
       // 玩家離開傳送門後才能再觸發詢問
       if (s.wasOnPortal && !onExitPortal && !onEntryPortal) {
@@ -1300,17 +1345,19 @@ export default function MazeFirstPerson() {
         s.transitionPrompt = null;
         setTransitionPrompt(null);
       }
-      // 首次踩上傳送門時顯示詢問框
+      // 首次踩上傳送門時顯示詢問框，並凍結移動（uiPaused=true）
       if (!s.wasOnPortal && !s.transitionPrompt) {
         if (onExitPortal) {
           if (s.multiMap && s.currentMapIdx < s.maps.length - 1) {
             // 多層：前往下一層
             s.transitionPrompt = 'fwd';
             setTransitionPrompt('fwd');
+            s.uiPaused = true;
           } else if (s.gameMode === 'DUNGEON_INTERIOR') {
             // RPG 模式：出口 → 詢問是否返回大地圖
             s.transitionPrompt = 'gate';
             setTransitionPrompt('gate');
+            s.uiPaused = true;
           } else {
             // 舊的「迷宮遊戲」模式
             s.won = true; setWon(true);
@@ -1320,6 +1367,7 @@ export default function MazeFirstPerson() {
           s.transitionPrompt = 'bwd';
           setTransitionPrompt('bwd');
           s.wasOnPortal = true;
+          s.uiPaused = true;
         }
       }
 
@@ -1573,6 +1621,7 @@ export default function MazeFirstPerson() {
       setCurrentMapIdx(s.currentMapIdx);
       const sp = findSafeSpawn(s.grid, s.entryGX, s.entryGY);
       s.px = sp.px; s.py = sp.py;
+      s.uiPaused = false;
     } else {
       s.currentMapIdx--;
       if (s.currentMapIdx < 0) {
@@ -1586,6 +1635,7 @@ export default function MazeFirstPerson() {
       setCurrentMapIdx(s.currentMapIdx);
       const sp = findSafeSpawn(s.grid, s.exitGX, s.exitGY);
       s.px = sp.px; s.py = sp.py;
+      s.uiPaused = false;
     }
   }, []);
 
@@ -1594,6 +1644,7 @@ export default function MazeFirstPerson() {
     const s = g.current;
     s.transitionPrompt = null;
     setTransitionPrompt(null);
+    s.uiPaused = false;  // 恢復移動
     // wasOnPortal 保持 true，確保玩家離開後才能再觸發
   }, []);
 
@@ -2463,7 +2514,7 @@ export default function MazeFirstPerson() {
                   {!q.completed && step && (
                     <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginLeft: 8 }}>
                       → {step.desc}
-                      {step.type === 'kill' && (
+                      {(step.type === 'kill' || step.type === 'collect') && step.count > 1 && (
                         <> ({q.progress?.[q.stepIdx] ?? 0}/{step.count})</>
                       )}
                     </span>

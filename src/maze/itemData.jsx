@@ -135,4 +135,22 @@ export const ITEMS = {
     desc: '雪域深處的珍稀冰晶，可製成特殊武器。',
     nation: 'snow',
   },
+
+  // ── 地城採集素材（dungeon gather nodes 掉落）─
+  cave_mushroom: {
+    name: '洞穴蘑菇', type: 'resource', category: ITEM_CATEGORY.CONSUMABLE, icon: '🍄',
+    value: 6, stackLimit: 10,
+    desc: '在陰暗潮濕的地城牆縫中生長，可製成回復藥。',
+  },
+  fire_stone: {
+    name: '火焰原石', type: 'resource', category: ITEM_CATEGORY.CONSUMABLE, icon: '🔥',
+    value: 20, stackLimit: 10,
+    desc: '火山洞窟深處的高溫礦脈中採集，蘊含灼熱能量。',
+    nation: 'desert',
+  },
+  relic_fragment: {
+    name: '遺跡碎片', type: 'resource', category: ITEM_CATEGORY.CONSUMABLE, icon: '🏺',
+    value: 25, stackLimit: 10,
+    desc: '古代神殿牆壁上剝落的雕刻碎塊，記載著失落文明的知識。',
+  },
 };

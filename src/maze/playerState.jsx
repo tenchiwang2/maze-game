@@ -149,8 +149,9 @@ export function addQuest(player, questDef, totalGameMins = 0) {
   // 已存在且未 claimed → 不重複接
   const existing = player.quests.find(q => q.questId === questDef.id);
   if (existing && !existing.claimed) return;
-  // repeatable 且已 claimed → 允許重新接（移除舊記錄）
+  // 已 claimed：repeatable 才允許重新接，否則永久封鎖
   if (existing && existing.claimed) {
+    if (!questDef.repeatable) return;   // repeatable: false → 一次性任務，領獎後不可再接
     const idx = player.quests.indexOf(existing);
     if (idx >= 0) player.quests.splice(idx, 1);
   }
@@ -217,8 +218,12 @@ export function checkQuestStep(player, questDef, eventType, eventData) {
     }
   }
   if (step.type === 'collect' && eventType === 'collect' && eventData.itemId === step.itemId) {
-    qState.stepIdx++;
-    if (qState.stepIdx >= questDef.steps.length) qState.completed = true;
+    const incoming = eventData.qty ?? 1;
+    qState.progress[qState.stepIdx] = (qState.progress[qState.stepIdx] || 0) + incoming;
+    if (qState.progress[qState.stepIdx] >= (step.count ?? 1)) {
+      qState.stepIdx++;
+      if (qState.stepIdx >= questDef.steps.length) qState.completed = true;
+    }
     return true;
   }
   // report：找到世界 NPC（dialogueId 對應）時完成

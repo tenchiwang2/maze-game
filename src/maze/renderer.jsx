@@ -261,7 +261,7 @@ export function drawEventMarker(ctx, sx, dist, H, ev, t) {
   if (dist < 0.4) return;
   const h = Math.min(H * 1.6, H / dist) * 0.5, top = (H - h) / 2, r = Math.max(3, h * 0.18);
   const a = Math.min(1, Math.max(0, 1 - dist / 14)), pulse = 0.8 + Math.sin(t * 0.07) * 0.2;
-  const colors = { message: "rgba(120,160,255", teleport: "rgba(200,80,255", door: "rgba(255,200,40", win: "rgba(80,220,120" };
+  const colors = { message: "rgba(120,160,255", teleport: "rgba(200,80,255", door: "rgba(255,200,40", win: "rgba(80,220,120", gather: "rgba(60,200,100" };
   const base = colors[ev.type] || "rgba(200,200,200";
   ctx.fillStyle = `${base},${a * 0.85 * pulse})`; ctx.beginPath(); ctx.arc(sx, top + h / 2, r, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = `${base},${a * 0.4 * pulse})`; ctx.beginPath(); ctx.arc(sx, top + h / 2, r * 1.6, 0, Math.PI * 2); ctx.fill();

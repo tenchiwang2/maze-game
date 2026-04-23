@@ -136,6 +136,55 @@ export const QUEST_DEFS = [
     reward: { gold: 90, exp: 60, items: [{ itemId: 'hi_potion', qty: 1 }] },
   },
 
+  // ── 採集任務 ───────────────────────────────────────────────────────────────
+
+  {
+    id: 'quest_cave_mushroom',
+    title: '洞穴蘑菇採集',
+    desc: '港口長聽說東港城地下水道長滿了洞穴蘑菇，想委託冒險者採集幾株，作為航海藥劑的原料。注意，地下有海盜出沒！',
+    giverNpcId: 'harbor_captain',
+    acceptAt: 'npc',
+    repeatable: false,
+    steps: [
+      { desc: '前往東港城地下採集洞穴蘑菇', type: 'collect', itemId: 'cave_mushroom', count: 3 },
+      { desc: '回到東港城回報港口長',       type: 'reach',   locationId: 'town_harbor' },
+    ],
+    timeLimitMins: 2880,   // 2 天
+    reward: { gold: 70, exp: 60, items: [{ itemId: 'health_potion', qty: 2 }] },
+  },
+
+  {
+    id: 'quest_fire_stone',
+    title: '火焰原石探勘',
+    desc: '沙漠祭司需要火山洞窟深處的火焰原石來完成上古儀式，但熔岩地帶危險重重，需要有能力的冒險者代勞。',
+    giverNpcId: 'npc_shaman',
+    acceptAt: 'npc',
+    repeatable: false,
+    steps: [
+      { desc: '前往火山洞窟',             type: 'reach',   locationId: 'dungeon_volcano' },
+      { desc: '採集火焰原石',             type: 'collect', itemId: 'fire_stone', count: 2 },
+      { desc: '在世界地圖找沙漠祭司回報', type: 'report',  npcId: 'npc_shaman' },
+    ],
+    timeLimitMins: 7200,   // 5 天
+    reward: { gold: 140, exp: 95, items: [{ itemId: 'mp_potion', qty: 2 }] },
+  },
+
+  {
+    id: 'quest_relic_study',
+    title: '遺跡碎片蒐集',
+    desc: '冒險公會收到王室學者的委託，希望取得古代神殿牆壁上的浮雕碎片，以研究失落文明。神殿內有不死守衛，請做好戰鬥準備。',
+    giverNpcId: 'guild_master',
+    acceptAt: 'npc',
+    repeatable: false,
+    steps: [
+      { desc: '前往古代神殿',             type: 'reach',   locationId: 'temple_ancient' },
+      { desc: '採集遺跡碎片',             type: 'collect', itemId: 'relic_fragment', count: 2 },
+      { desc: '回到亞薩王都交差',         type: 'reach',   locationId: 'capital_ys' },
+    ],
+    timeLimitMins: 10080,  // 7 天
+    reward: { gold: 200, exp: 130, items: [{ itemId: 'hi_potion', qty: 1 }] },
+  },
+
   {
     id: 'quest_snow_missing',
     title: '雪地失蹤調查',
