@@ -539,7 +539,15 @@ export default function MazeFirstPerson() {
   const [toasts,        setToasts]            = useState([]);
   const [activePort, setActivePort]           = useState(null); // 港口旅行面板
   const [nearbyNPC,  setNearbyNPC]            = useState(null); // 靠近的世界 NPC
-  const [playerStats, setPlayerStats]         = useState(() => createPlayer()); // for re-render trigger
+  // ── 冒險者系統（必須在 playerStats / playerRef 之前宣告）──
+  const adventurersRef  = useRef(initAdventurers());  // { [id]: adventurerState }
+  const [activeAdvId, setActiveAdvId] = useState(DEFAULT_ACTIVE_ID);
+  // 使用同一份 adventurersRef 物件，避免重複初始化
+  const [adventurerList, setAdventurerList] = useState(() => Object.values(adventurersRef.current));
+
+  // playerRef / playerStats 從預設冒險者的職業屬性初始化（而非 createPlayer() 預設值）
+  const playerRef       = useRef({ ...adventurersRef.current[DEFAULT_ACTIVE_ID] });
+  const [playerStats, setPlayerStats]         = useState(() => ({ ...adventurersRef.current[DEFAULT_ACTIVE_ID] }));
   const [questLog, setQuestLog]               = useState([]);
   const [showQuestLog, setShowQuestLog]        = useState(false);
   const [activeQuestOffer, setActiveQuestOffer] = useState(null);
@@ -553,13 +561,6 @@ export default function MazeFirstPerson() {
 
   // ── Debug 面板 ──
   const [showDebug, setShowDebug] = useState(false);
-
-  // ── 冒險者系統 ──
-  const adventurersRef  = useRef(initAdventurers());  // { [id]: adventurerState }
-  const [activeAdvId, setActiveAdvId] = useState(DEFAULT_ACTIVE_ID);
-  const [adventurerList, setAdventurerList] = useState(() => Object.values(initAdventurers()));
-
-  const playerRef       = useRef(createPlayer());
   const nearbyLocRef    = useRef(null);
   const worldTerrainRef = useRef(null);
   // 當前世界地點（含工廠產生的隨機位置）
@@ -1151,8 +1152,8 @@ export default function MazeFirstPerson() {
       const dx = s.px - e.px, dy = s.py - e.py;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      // 觸發戰鬥
-      if (dist < ENEMY_TRIGGER_DIST && !s.uiPaused) {
+      // 觸發戰鬥（必須玩家有移動才觸發）
+      if (dist < ENEMY_TRIGGER_DIST && !s.uiPaused && s.playerMovedThisFrame) {
         e.alive = false;
         s.uiPaused = true;
         emit('combat:start', { enemyId: e.enemyId });
@@ -1212,8 +1213,8 @@ export default function MazeFirstPerson() {
       setNearbyNPC(near ?? null);
     }
 
-    // 敵對 NPC 自動觸發戰鬥
-    if (!s.uiPaused && s.interactCooldown === 0) {
+    // 敵對 NPC 觸發戰鬥（必須玩家有移動才觸發）
+    if (!s.uiPaused && s.interactCooldown === 0 && s.playerMovedThisFrame) {
       const hostiles = getHostileNPCsNear(s.worldNPCs, s.wx, s.wy, 1.0);
       if (hostiles.length > 0) {
         const h = hostiles[0];
@@ -1234,6 +1235,7 @@ export default function MazeFirstPerson() {
     const ctx = canvas.getContext("2d");
     const W = canvas.width, H = canvas.height;
     s.t++;
+    s.playerMovedThisFrame = false;   // 每幀重設，由移動區塊設為 true
     if (s.interactCooldown > 0) s.interactCooldown--;
 
     // ── 大地圖模式 ────────────────────────────
@@ -1252,6 +1254,7 @@ export default function MazeFirstPerson() {
 
         // 移動距離累積 → 時間流逝
         const moved = Math.abs(s.wx - prevWx) + Math.abs(s.wy - prevWy);
+        if (moved > 0) s.playerMovedThisFrame = true;
         if (moved > 0) {
           s.timeAccum += moved;
           const minsGained = Math.floor(s.timeAccum / TIME_WORLD_PER_MIN);
@@ -1393,6 +1396,7 @@ export default function MazeFirstPerson() {
 
       // 移動距離累積 → 時間流逝（轉向不算）
       const dungeonMoved = Math.abs(s.px - prevPx) + Math.abs(s.py - prevPy);
+      if (dungeonMoved > 0) s.playerMovedThisFrame = true;
       if (dungeonMoved > 0) {
         s.timeAccum += dungeonMoved;
         const minsGained = Math.floor(s.timeAccum / TIME_DUNGEON_PER_MIN);
@@ -2050,7 +2054,12 @@ export default function MazeFirstPerson() {
           defaultDoorOpen={defaultDoorOpen} setDefaultDoorOpen={setDefaultDoorOpen}
           factoryMode={factoryMode} setFactoryMode={setFactoryMode}
           onRegenMaze={() => setSeed(s => s + 1)}
-          cheatFullMap={cheatFullMap} setCheatFullMap={setCheatFullMap}
+          cheatFullMap={cheatFullMap}
+          onToggleFullMap={() => {
+            const next = !cheatFullMap;
+            setCheatFullMap(next);
+            g.current.cheatFullMap = next;
+          }}
           onAddGold={debugAddGold}
           onFillHpMp={debugFillHpMp}
           onAddExp={debugAddExp}
@@ -2236,22 +2245,6 @@ export default function MazeFirstPerson() {
                     flex: 1, padding: '5px 0', borderRadius: 5, cursor: 'pointer', fontSize: 14,
                     background: 'rgba(60,60,100,0.4)', border: '1px solid rgba(100,100,180,0.4)', color: '#aaaaff',
                   }}>⛺</button>
-                )}
-                {gameMode === 'DUNGEON_INTERIOR' && (
-                  <button
-                    onClick={() => {
-                      const next = !cheatFullMap;
-                      setCheatFullMap(next);
-                      g.current.cheatFullMap = next;
-                    }}
-                    title="作弊：全開小地圖"
-                    style={{
-                      flex: 1, padding: '5px 0', borderRadius: 5, cursor: 'pointer', fontSize: 14,
-                      background: cheatFullMap ? 'rgba(200,160,0,0.5)' : 'rgba(80,60,0,0.4)',
-                      border: `1px solid ${cheatFullMap ? 'rgba(255,220,0,0.8)' : 'rgba(140,110,0,0.4)'}`,
-                      color: cheatFullMap ? '#ffe066' : '#998833',
-                    }}
-                  >🗺</button>
                 )}
               </div>
             </div>
