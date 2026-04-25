@@ -546,7 +546,7 @@ export default function MazeFirstPerson() {
 
   // ── 世界地圖工廠 ──
   const [worldFactoryId, setWorldFactoryId] = useState(WORLD_FACTORY_IDS.GRAND_WORLD);
-  const [worldSeed, setWorldSeed]           = useState(1);
+  const [worldSeed, setWorldSeed]           = useState(() => Math.floor(Math.random() * 99999) + 1);
 
   const playerRef       = useRef(createPlayer());
   const nearbyLocRef    = useRef(null);
@@ -1560,7 +1560,7 @@ export default function MazeFirstPerson() {
   useEffect(() => {
     // 初始化世界地圖（只需一次）
     if (!worldTerrainRef.current) {
-      regenerateWorld(WORLD_FACTORY_IDS.GRAND_WORLD, 1);
+      regenerateWorld(WORLD_FACTORY_IDS.GRAND_WORLD, worldSeed);
     }
 
     const canvas = canvasRef.current; if (!canvas) return;
@@ -2537,6 +2537,8 @@ export default function MazeFirstPerson() {
           questLog={questLog}
           questDefs={QUEST_DEFS}
           totalGameMins={g.current.totalGameMins ?? 0}
+          supplyQuests={supplyQuestsRef.current}
+          playerItems={playerStats?.items ?? []}
           onClose={closeQuestLog}
         />
       )}
