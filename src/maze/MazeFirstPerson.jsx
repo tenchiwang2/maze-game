@@ -20,6 +20,7 @@ import { initNPCs, updateNPCs, getNearbyNPC, getHostileNPCsNear } from './npcSys
 import { createPlayer, addItem, addQuest, claimReward, checkQuestStep, checkExpiredQuests, gainExp, hasItem } from './playerState.jsx';
 import { initAdventurers, DEFAULT_ACTIVE_ID, ADVENTURER_DEFS } from './adventurers.js';
 import { adventurerLog } from './adventurerState.js';
+import { tickAdventurers } from './adventurerAI.js';
 import {
   initShopStocks, checkRestockNeeds, processCraftingQueue,
   generateSupplyQuests, acceptSupplyQuest, tryDeliverSupplyQuests, checkExpiredSupplyQuests,
@@ -1304,6 +1305,30 @@ export default function MazeFirstPerson() {
               const newJobs = checkRestockNeeds(shopStocksRef.current, craftingQueueRef.current, supplyQuestsRef.current, s.totalGameMins);
               for (const j of newJobs) craftingQueueRef.current.push(j);
               processCraftingQueue(shopStocksRef.current, craftingQueueRef.current, s.totalGameMins);
+            }
+
+            // ── 冒險者 AI tick ──────────────────────
+            const advEvents = tickAdventurers(
+              adventurersRef.current,
+              activeAdvId,
+              worldLocationsRef.current,
+              s.gameTime,
+              minsGained,
+            );
+            if (advEvents.length > 0) {
+              // 同步 React state（血條/等級更新）
+              setAdventurerList(Object.values(adventurersRef.current).map(a => ({ ...a })));
+              // 轉換為 toast 通知
+              for (const ev of advEvents) {
+                if (ev.type === 'depart') {
+                  addToast({ type: 'npc', icon: ev.adv.portrait, title: `${ev.adv.name} 出發冒險`, body: `前往 ${ev.target.label}`, duration: 2000 });
+                } else if (ev.type === 'dungeon_done') {
+                  const body = `+${ev.goldEarned}💰 +${ev.expEarned}EXP${ev.leveled ? ' ⬆升級' : ''}`;
+                  addToast({ type: 'loot', icon: ev.adv.portrait, title: `${ev.adv.name} 地城完成！`, body, duration: 2500 });
+                } else if (ev.type === 'returned') {
+                  addToast({ type: 'system', icon: ev.adv.portrait, title: `${ev.adv.name} 返回休息`, duration: 1800 });
+                }
+              }
             }
           }
         }
