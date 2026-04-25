@@ -38,6 +38,7 @@ import StatsPanel          from './StatsPanel.jsx';
 import ToastNotification   from './ToastNotification.jsx';
 import CampRestPanel, { calcRestRecovery } from './CampRestPanel.jsx';
 import TownPanel      from './TownPanel.jsx';
+import DebugPanel     from './DebugPanel.jsx';
 import { on, emit } from './eventBus.js';
 import {
   TIME_START, TIME_WORLD_PER_MIN, TIME_DUNGEON_PER_MIN,
@@ -548,6 +549,9 @@ export default function MazeFirstPerson() {
   const [worldFactoryId, setWorldFactoryId] = useState(WORLD_FACTORY_IDS.GRAND_WORLD);
   const [worldSeed, setWorldSeed]           = useState(() => Math.floor(Math.random() * 99999) + 1);
 
+  // ── Debug 面板 ──
+  const [showDebug, setShowDebug] = useState(false);
+
   const playerRef       = useRef(createPlayer());
   const nearbyLocRef    = useRef(null);
   const worldTerrainRef = useRef(null);
@@ -861,6 +865,56 @@ export default function MazeFirstPerson() {
     };
     worldLocationsRef.current = [...worldLocationsRef.current, loc];
     addToast({ type: 'quest', icon: '⚔️', title: '討伐地城已開放', body: '地圖上出現了任務地城', duration: 3000 });
+  }
+
+  // ── Debug 面板：作弊功能 ───────────────────
+  function debugAddGold(amount) {
+    const p = playerRef.current;
+    p.gold = (p.gold || 0) + amount;
+    setPlayerStats({ ...p });
+    addToast({ type: 'loot', icon: '💰', title: `+${amount} 金幣（作弊）`, duration: 1500 });
+  }
+  function debugFillHpMp(mode) {
+    const p = playerRef.current;
+    if (mode === 'reset') {
+      Object.assign(p, createPlayer());
+      setQuestLog([]);
+      addToast({ type: 'system', icon: '💀', title: '玩家已重置', duration: 2000 });
+    } else {
+      p.hp = p.maxHp;
+      p.mp = p.maxMp;
+      addToast({ type: 'heal', icon: '❤️', title: 'HP/MP 補滿（作弊）', duration: 1500 });
+    }
+    setPlayerStats({ ...p });
+  }
+  function debugAddExp(amount) {
+    const p = playerRef.current;
+    const result = gainExp(p, amount);
+    if (result?.levelUp) {
+      setLevelUpMsg(`⬆ 升級！Lv.${p.lv}`);
+      setTimeout(() => setLevelUpMsg(''), 2000);
+    }
+    setPlayerStats({ ...p });
+    addToast({ type: 'exp', icon: '⭐', title: `+${amount} EXP（作弊）`, duration: 1500 });
+  }
+  function debugTeleport(loc) {
+    const s = g.current;
+    // 若在地城中，先離開
+    if (s.gameMode !== 'OVERWORLD') {
+      doExitToOverworld();
+    }
+    s.wx = loc.wx + 0.5;
+    s.wy = loc.wy + 0.5;
+    addToast({ type: 'system', icon: '⚡', title: `傳送至 ${loc.label}`, duration: 1800 });
+  }
+  function debugAdvanceTime(mins) {
+    setGameTime(t => {
+      const next = t + mins;
+      g.current.gameTime = next;
+      g.current.totalGameMins = (g.current.totalGameMins ?? 0) + mins;
+      return next;
+    });
+    addToast({ type: 'system', icon: '⏰', title: `時間快進 +${mins}分`, duration: 1500 });
   }
 
   // ── 任務地城：討伐完成後移除入口 ───────────
@@ -1568,6 +1622,12 @@ export default function MazeFirstPerson() {
     cancelAnimationFrame(g.current.animId);
     g.current.animId = requestAnimationFrame(() => renderRef.current?.());
     const onKey = e => {
+      // ` (Backtick) 或 F2 → 切換 Debug 面板
+      if (e.type === "keydown" && (e.code === "Backquote" || e.code === "F2")) {
+        e.preventDefault();
+        setShowDebug(v => !v);
+        return;
+      }
       g.current.keys[e.code] = e.type === "keydown";
       g.current.keys[e.key] = e.type === "keydown";
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) e.preventDefault();
@@ -1909,60 +1969,51 @@ export default function MazeFirstPerson() {
         v0.3.0-timesystem
       </div>
 
-      {/* ── 迷宮工廠選擇器（地城模式才顯示）── */}
-      {gameMode === 'DUNGEON_INTERIOR' && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
-          {FACTORIES.map(f => (
-            <button
-              key={f.id}
-              onClick={() => { setFactoryMode(f.id); setSeed(s => s + 1); }}
-              title={f.description}
-              style={{
-                fontSize: 12, padding: "5px 12px",
-                borderRadius: "var(--border-radius-md)",
-                background: factoryMode === f.id ? "var(--color-background-info)" : "var(--color-background-secondary)",
-                color: factoryMode === f.id ? "var(--color-text-info)" : "var(--color-text-secondary)",
-                border: factoryMode === f.id ? "0.5px solid var(--color-border-info)" : "0.5px solid var(--color-border-tertiary)",
-                fontWeight: factoryMode === f.id ? 600 : 400,
-              }}>
-              {f.label}
-            </button>
-          ))}
-          <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", alignSelf: "center", marginLeft: 4 }}>
-            {FACTORIES.find(f => f.id === factoryMode)?.description}
-          </span>
-        </div>
-      )}
+      {/* ── Debug 面板切換按鈕 ── */}
+      <button
+        onClick={() => setShowDebug(v => !v)}
+        title="Debug 面板（` 或 F2）"
+        style={{
+          position: 'fixed', top: 16, right: 16,
+          fontSize: 11, padding: '4px 10px',
+          borderRadius: 6, cursor: 'pointer', zIndex: 9850,
+          background: showDebug ? 'rgba(80,160,255,0.22)' : 'rgba(30,35,50,0.80)',
+          color: showDebug ? '#80c8ff' : 'rgba(160,170,200,0.55)',
+          border: showDebug ? '1px solid rgba(80,160,255,0.40)' : '1px solid rgba(80,90,120,0.35)',
+          backdropFilter: 'blur(4px)',
+        }}
+      >
+        ⚙ DEBUG
+      </button>
 
-      {/* ── 大地圖工廠選擇器 ── */}
-      {gameMode === 'OVERWORLD' && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
-          {WORLD_FACTORIES.map(f => (
-            <button
-              key={f.id}
-              onClick={() => setWorldFactoryId(f.id)}
-              title={f.description}
-              style={{
-                fontSize: 12, padding: "5px 12px",
-                borderRadius: "var(--border-radius-md)",
-                background: worldFactoryId === f.id ? "var(--color-background-success)" : "var(--color-background-secondary)",
-                color: worldFactoryId === f.id ? "var(--color-text-success)" : "var(--color-text-secondary)",
-                border: worldFactoryId === f.id ? "0.5px solid var(--color-border-success)" : "0.5px solid var(--color-border-tertiary)",
-                fontWeight: worldFactoryId === f.id ? 600 : 400,
-              }}>
-              {f.label}
-            </button>
-          ))}
-          <button
-            onClick={() => setWorldSeed(s => s + 1)}
-            style={{ fontSize: 12, padding: "5px 12px", marginLeft: 4 }}>
-            🎲 重新產生地圖
-          </button>
-          <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", alignSelf: "center" }}>
-            {WORLD_FACTORIES.find(f => f.id === worldFactoryId)?.description}
-            {' '}#{worldSeed}
-          </span>
-        </div>
+      {/* ── Debug 面板 ── */}
+      {showDebug && (
+        <DebugPanel
+          worldSeed={worldSeed}
+          onRegenMap={() => setWorldSeed(s => s + 1)}
+          worldFactoryId={worldFactoryId}
+          setWorldFactoryId={setWorldFactoryId}
+          cols={cols} setCols={setCols}
+          rows={rows} setRows={setRows}
+          randomCount={randomCount} setRandomCount={setRandomCount}
+          minRoom={minRoom} setMinRoom={setMinRoom}
+          maxRoom={maxRoom} setMaxRoom={setMaxRoom}
+          defaultDoorCount={defaultDoorCount} setDefaultDoorCount={setDefaultDoorCount}
+          defaultDoorOpen={defaultDoorOpen} setDefaultDoorOpen={setDefaultDoorOpen}
+          factoryMode={factoryMode} setFactoryMode={setFactoryMode}
+          onRegenMaze={() => setSeed(s => s + 1)}
+          cheatFullMap={cheatFullMap} setCheatFullMap={setCheatFullMap}
+          onAddGold={debugAddGold}
+          onFillHpMp={debugFillHpMp}
+          onAddExp={debugAddExp}
+          playerStats={playerStats}
+          locations={worldLocationsRef.current}
+          onTeleport={debugTeleport}
+          gameTime={gameTime}
+          onAdvanceTime={debugAdvanceTime}
+          formatTimeFn={formatTime}
+          onClose={() => setShowDebug(false)}
+        />
       )}
 
       {/* ── 地城模式按鈕 ── */}
