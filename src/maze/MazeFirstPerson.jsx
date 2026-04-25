@@ -18,6 +18,8 @@ import { drawOverworld } from './OverworldRenderer.jsx';
 import { NPC_DEFS } from './world/npcs.js';
 import { initNPCs, updateNPCs, getNearbyNPC, getHostileNPCsNear } from './npcSystem.js';
 import { createPlayer, addItem, addQuest, claimReward, checkQuestStep, checkExpiredQuests, gainExp, hasItem } from './playerState.jsx';
+import { initAdventurers, DEFAULT_ACTIVE_ID, ADVENTURER_DEFS } from './adventurers.js';
+import { adventurerLog } from './adventurerState.js';
 import {
   initShopStocks, checkRestockNeeds, processCraftingQueue,
   generateSupplyQuests, acceptSupplyQuest, tryDeliverSupplyQuests, checkExpiredSupplyQuests,
@@ -552,6 +554,11 @@ export default function MazeFirstPerson() {
   // ── Debug 面板 ──
   const [showDebug, setShowDebug] = useState(false);
 
+  // ── 冒險者系統 ──
+  const adventurersRef  = useRef(initAdventurers());  // { [id]: adventurerState }
+  const [activeAdvId, setActiveAdvId] = useState(DEFAULT_ACTIVE_ID);
+  const [adventurerList, setAdventurerList] = useState(() => Object.values(initAdventurers()));
+
   const playerRef       = useRef(createPlayer());
   const nearbyLocRef    = useRef(null);
   const worldTerrainRef = useRef(null);
@@ -915,6 +922,47 @@ export default function MazeFirstPerson() {
       return next;
     });
     addToast({ type: 'system', icon: '⏰', title: `時間快進 +${mins}分`, duration: 1500 });
+  }
+
+  function debugSwitchAdventurer(newId) {
+    if (newId === activeAdvId) return;
+    const s = g.current;
+
+    // 1. 儲存目前玩家狀態回 adventurersRef
+    const cur = adventurersRef.current[activeAdvId];
+    if (cur) {
+      Object.assign(cur, playerRef.current);
+      cur.id = activeAdvId;          // 確保 id 不被覆蓋
+      cur.isActive = false;
+      // 儲存當前位置
+      cur.currentWX = s.wx;
+      cur.currentWY = s.wy;
+    }
+
+    // 2. 載入新冒險者
+    const next = adventurersRef.current[newId];
+    if (!next) return;
+    next.isActive = true;
+    Object.assign(playerRef.current, next);
+    playerRef.current.id = next.id;
+
+    // 3. 若在大地圖，移動到新冒險者的位置
+    if (s.gameMode === 'OVERWORLD') {
+      s.wx = next.currentWX;
+      s.wy = next.currentWY;
+    }
+
+    // 4. 更新 React state
+    setActiveAdvId(newId);
+    setPlayerStats({ ...playerRef.current });
+    setQuestLog(playerRef.current.quests.map(q => ({ ...q })));
+    setAdventurerList(Object.values(adventurersRef.current));
+
+    const def = ADVENTURER_DEFS.find(d => d.id === newId);
+    addToast({ type: 'system', icon: next.portrait, title: `切換至 ${next.name}（${next.classLabel}）`, duration: 2000 });
+
+    // 5. 記錄操作日誌
+    adventurerLog(next, `玩家切換操控此角色`, g.current.totalGameMins ?? 0);
   }
 
   // ── 任務地城：討伐完成後移除入口 ───────────
@@ -2007,6 +2055,9 @@ export default function MazeFirstPerson() {
           onFillHpMp={debugFillHpMp}
           onAddExp={debugAddExp}
           playerStats={playerStats}
+          adventurerList={adventurerList}
+          activeAdvId={activeAdvId}
+          onSwitchAdventurer={debugSwitchAdventurer}
           locations={worldLocationsRef.current}
           onTeleport={debugTeleport}
           gameTime={gameTime}

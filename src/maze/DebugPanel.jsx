@@ -202,6 +202,10 @@ export default function DebugPanel({
   onFillHpMp,
   onAddExp,
   playerStats,
+  // adventurers
+  adventurerList,
+  activeAdvId,
+  onSwitchAdventurer,
   // teleport
   locations,
   onTeleport,
@@ -236,33 +240,65 @@ export default function DebugPanel({
         {/* ── 角色切換 ─────────────────────────── */}
         {tab === 'char' && (
           <div>
-            <div style={S.sectionLabel}>目前角色</div>
-            <div style={{
-              background: 'rgba(80,160,255,0.10)',
-              border: '1px solid rgba(80,160,255,0.25)',
-              borderRadius: 8, padding: '10px 12px', marginBottom: 14,
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#80c8ff', marginBottom: 4 }}>
-                🧑 {playerStats?.name || '玩家'}
-              </div>
-              <div style={{ display: 'flex', gap: 12, fontSize: 12, color: 'rgba(200,210,230,0.75)' }}>
-                <span>❤ {playerStats?.hp ?? '?'}/{playerStats?.maxHp ?? '?'}</span>
-                <span>💧 {playerStats?.mp ?? '?'}/{playerStats?.maxMp ?? '?'}</span>
-                <span>Lv.{playerStats?.lv ?? 1}</span>
-                <span>💰 {playerStats?.gold ?? 0}</span>
-              </div>
+            <div style={S.sectionLabel}>冒險者列表（點擊切換主控）</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {(adventurerList ?? []).map(adv => {
+                const isActive = adv.id === activeAdvId;
+                const hpPct = adv.maxHp > 0 ? adv.hp / adv.maxHp : 0;
+                const hpColor = hpPct > 0.5 ? '#60d090' : hpPct > 0.25 ? '#ffd060' : '#ff6666';
+                return (
+                  <button
+                    key={adv.id}
+                    onClick={() => onSwitchAdventurer?.(adv.id)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
+                      textAlign: 'left',
+                      background: isActive ? 'rgba(80,160,255,0.16)' : 'rgba(30,35,50,0.60)',
+                      border: isActive
+                        ? '1.5px solid rgba(80,160,255,0.50)'
+                        : '1px solid rgba(70,80,100,0.35)',
+                    }}
+                  >
+                    {/* 頭像 */}
+                    <span style={{ fontSize: 22, lineHeight: 1, minWidth: 28, textAlign: 'center' }}>
+                      {adv.portrait}
+                    </span>
+                    {/* 資訊 */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 3 }}>
+                        <span style={{
+                          fontSize: 13, fontWeight: 600,
+                          color: isActive ? '#80c8ff' : 'var(--color-text-primary)',
+                        }}>
+                          {adv.name}
+                        </span>
+                        <span style={{ fontSize: 10, color: adv.classColor ?? '#888' }}>
+                          {adv.classIcon} {adv.classLabel}
+                        </span>
+                        <span style={{ fontSize: 10, color: 'rgba(160,170,200,0.55)', marginLeft: 'auto' }}>
+                          Lv.{adv.lv}
+                        </span>
+                      </div>
+                      {/* HP 血條 */}
+                      <div style={{ height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${hpPct * 100}%`, background: hpColor, borderRadius: 2, transition: 'width 0.3s' }} />
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, fontSize: 10, color: 'rgba(160,170,200,0.60)', marginTop: 3 }}>
+                        <span style={{ color: hpColor }}>❤ {adv.hp}/{adv.maxHp}</span>
+                        <span>💧 {adv.mp}/{adv.maxMp}</span>
+                        <span>💰 {adv.gold}</span>
+                        {isActive && <span style={{ color: '#80c8ff', marginLeft: 'auto' }}>🎮 操控中</span>}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
 
-            <div style={S.sectionLabel}>冒險者列表</div>
-            <div style={{
-              background: 'rgba(40,45,60,0.60)',
-              border: '1px solid rgba(100,110,140,0.30)',
-              borderRadius: 8, padding: '10px 12px',
-              fontSize: 12, color: 'rgba(160,170,190,0.60)',
-              textAlign: 'center',
-            }}>
-              🚧 冒險者系統開發中<br />
-              <span style={{ fontSize: 10, opacity: 0.7 }}>（Adventurer System — 即將推出）</span>
+            <div style={{ marginTop: 12, fontSize: 11, color: 'rgba(160,170,190,0.45)', lineHeight: 1.6 }}>
+              切換角色後，當前角色的狀態會自動儲存。<br />
+              非操控角色未來將由 AI 自動冒險。
             </div>
           </div>
         )}
