@@ -239,12 +239,29 @@ export default function StatsPanel({ player, onClose }) {
             </div>
 
             {/* 戰鬥屬性 + 金幣 */}
-            <div style={{ display: 'flex', gap: 5 }}>
+            <div style={{ display: 'flex', gap: 5, marginBottom: spouse ? 10 : 0 }}>
               <Stat icon="⚔ ATK" val={player.atk} color="#ffcc66" />
               <Stat icon="🛡 DEF" val={player.def} color="#88ddcc" />
               <Stat icon="💨 SPD" val={player.spd} color="#aaffaa" />
               <Stat icon="💰 金幣" val={player.gold} color="#ffd060" />
             </div>
+
+            {/* 婚姻加成 */}
+            {spouse && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '7px 10px', borderRadius: 7, marginTop: 2,
+                background: 'rgba(255,180,100,0.07)',
+                border: '0.5px solid rgba(255,180,100,0.25)',
+              }}>
+                <span style={{ fontSize: 14 }}>💍</span>
+                <span style={{ fontSize: 10, color: '#ffcc88', flex: 1 }}>
+                  已婚（{spouse.name}）
+                </span>
+                <span style={{ fontSize: 10, color: '#60d090' }}>HP+5%</span>
+                <span style={{ fontSize: 10, color: '#aac4ff', marginLeft: 6 }}>EXP+3%</span>
+              </div>
+            )}
           </>
         )}
 

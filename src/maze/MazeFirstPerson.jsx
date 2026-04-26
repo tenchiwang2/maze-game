@@ -28,8 +28,12 @@ import {
   checkNPCAccess,
   NATION_LABEL_TO_KEY,
 } from './reputationSystem.js';
-import { tickRelationshipDecay, adjustAffinity, applyFamilyImpact } from './relationshipSystem.js';
+import {
+  tickRelationshipDecay, adjustAffinity, applyFamilyImpact,
+  canPropose, applyPropose, applyMarriage, applyDivorce, getSpouse, getRelationship,
+} from './relationshipSystem.js';
 import GiftPanel, { giftAffinityDelta } from './GiftPanel.jsx';
+import ProposePanel from './ProposePanel.jsx';
 import {
   initShopStocks, checkRestockNeeds, processCraftingQueue,
   generateSupplyQuests, acceptSupplyQuest, tryDeliverSupplyQuests, checkExpiredSupplyQuests,
@@ -546,6 +550,7 @@ export default function MazeFirstPerson() {
   const [showInventory, setShowInventory]     = useState(false);
   const [showStats,     setShowStats]         = useState(false);
   const [giftTargetNPC, setGiftTargetNPC]     = useState(null); // { id, name, icon, ... }
+  const [proposeTarget, setProposeTarget]     = useState(null); // { npc, mode, nearTown }
   const [showCampRest,  setShowCampRest]      = useState(false);
   const [cheatFullMap,  setCheatFullMap]      = useState(false);
   const [toasts,        setToasts]            = useState([]);
@@ -1648,6 +1653,39 @@ export default function MazeFirstPerson() {
         }
       }
 
+      // P 鍵告白 / 婚禮 / 婚姻管理
+      if ((s.keys['KeyP'] || s.keys['p']) && s.interactCooldown === 0) {
+        s.keys['KeyP'] = false; s.keys['p'] = false;
+        const pNPC = getNearbyNPC(s.worldNPCs, s.wx, s.wy, 1.8);
+        if (pNPC && pNPC.alignment !== 'hostile') {
+          const p    = playerRef.current;
+          const rel  = getRelationship(p, pNPC.id);
+          const nearTown = !!nearbyLocation;
+
+          if (rel?.flags?.married) {
+            // 已婚：顯示婚姻管理
+            s.interactCooldown = 30;
+            s.uiPaused = true;
+            setProposeTarget({ npc: pNPC, mode: 'married', nearTown });
+          } else if (rel?.flags?.engaged) {
+            // 已訂婚：舉行婚禮
+            s.interactCooldown = 30;
+            s.uiPaused = true;
+            setProposeTarget({ npc: pNPC, mode: 'wedding', nearTown });
+          } else {
+            // 嘗試告白
+            const check = canPropose(p, pNPC.id);
+            if (!check.ok) {
+              addToast({ type: 'warn', icon: '💌', title: '無法告白', body: check.reason, duration: 2500 });
+            } else {
+              s.interactCooldown = 30;
+              s.uiPaused = true;
+              setProposeTarget({ npc: pNPC, mode: 'propose', nearTown });
+            }
+          }
+        }
+      }
+
       const mr = Math.round((s.py - 1) / 2), mc = Math.round((s.px - 1) / 2);
       eventsRef.current.forEach((ev, i) => {
         if (ev.triggered && !ev.repeatable) return;
@@ -2048,7 +2086,9 @@ export default function MazeFirstPerson() {
         // 領取獎勵
         const r = claimReward(p, claimable);
         if (r?.exp) {
-          const { leveled, messages } = gainExp(p, r.exp);
+          // 婚姻加成：EXP +3%
+          const expMult = getSpouse(p) ? 1.03 : 1.0;
+          const { leveled, messages } = gainExp(p, Math.round(r.exp * expMult));
           if (leveled) addToast({ type: 'levelup', icon: '⬆', title: messages[0] ?? '升等！', duration: 3000 });
         }
         applyQuestMoralRewards(p, claimable);
@@ -2492,13 +2532,11 @@ export default function MazeFirstPerson() {
             targetNPC={giftTargetNPC}
             onGive={(itemId, delta) => {
               const p = playerRef.current;
-              // 移除一個物品
               const slot = p.items.find(s => s.itemId === itemId);
               if (slot) {
                 slot.qty -= 1;
                 if (slot.qty <= 0) p.items = p.items.filter(s => s.itemId !== itemId);
               }
-              // 調整好感
               adjustAffinity(p, giftTargetNPC.id, delta, giftTargetNPC.name, g.current.totalGameMins, `送禮：${itemId}`);
               setPlayerStats({ ...p });
               addToast({ type: 'item', icon: '🎁', title: `送禮給 ${giftTargetNPC.name}，好感 +${delta}`, duration: 2200 });
@@ -2506,6 +2544,48 @@ export default function MazeFirstPerson() {
               g.current.uiPaused = false;
             }}
             onClose={() => { setGiftTargetNPC(null); g.current.uiPaused = false; }}
+          />
+        )}
+        {proposeTarget && (
+          <ProposePanel
+            player={playerRef.current}
+            targetNPC={proposeTarget.npc}
+            mode={proposeTarget.mode}
+            nearTown={proposeTarget.nearTown}
+            onResult={(result) => {
+              const p   = playerRef.current;
+              const npc = proposeTarget.npc;
+              if (result.type === 'propose') {
+                applyPropose(p, npc.id, result.accepted, g.current.totalGameMins);
+                if (result.accepted) {
+                  addToast({ type: 'npc', icon: '💕', title: `${npc.name} 接受了你的告白！`, duration: 3000 });
+                } else {
+                  addToast({ type: 'warn', icon: '💔', title: `${npc.name} 拒絕了你…`, duration: 2500 });
+                }
+                setPlayerStats({ ...p });
+              } else if (result.type === 'wedding') {
+                applyMarriage(p, npc.id, g.current.totalGameMins);
+                // 婚姻 HP 加成：maxHp +5%（記錄 bonus 供離婚還原）
+                const bonus = Math.round(p.maxHp * 0.05);
+                p.maxHp += bonus;
+                p.marriageHpBonus = (p.marriageHpBonus ?? 0) + bonus;
+                addToast({ type: 'quest', icon: '💒', title: `與 ${npc.name} 結為連理！HP+5% EXP+3%`, duration: 4000 });
+                setPlayerStats({ ...p });
+              } else if (result.type === 'divorce') {
+                applyDivorce(p, npc.id, g.current.totalGameMins);
+                // 還原 HP 加成
+                if (p.marriageHpBonus) {
+                  p.maxHp = Math.max(1, p.maxHp - p.marriageHpBonus);
+                  p.hp    = Math.min(p.hp, p.maxHp);
+                  p.marriageHpBonus = 0;
+                }
+                addToast({ type: 'warn', icon: '💔', title: `與 ${npc.name} 離婚了`, duration: 3000 });
+                setPlayerStats({ ...p });
+                setProposeTarget(null);
+                g.current.uiPaused = false;
+              }
+            }}
+            onClose={() => { setProposeTarget(null); g.current.uiPaused = false; }}
           />
         )}
         {showCampRest && (
