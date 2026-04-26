@@ -31,7 +31,7 @@ const ADVENTURE_TYPES = new Set([
 export function tickAdventurers(adventurers, activeAdvId, locations, gameTime, minsElapsed) {
   const events = [];
   for (const adv of Object.values(adventurers)) {
-    if (adv.id === activeAdvId || !adv.isAlive) continue;
+    if (adv.id === activeAdvId || !adv.isAlive || adv.isNPCAdventurer) continue;
     _tick(adv, locations, gameTime, minsElapsed, events);
   }
   return events;

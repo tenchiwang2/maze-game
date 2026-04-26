@@ -114,7 +114,7 @@ export function processCraftingQueue(shopStocks, craftingQueue, totalGameMins) {
 }
 
 // ── 購買 ──────────────────────────────────────
-export function buyFromShop(player, shopId, itemId, shopStocks) {
+export function buyFromShop(player, shopId, itemId, shopStocks, priceMultiplier = 1.0) {
   const shopDef = SHOPS[shopId];
   if (!shopDef) return { success: false, message: '商店不存在' };
 
@@ -124,13 +124,13 @@ export function buyFromShop(player, shopId, itemId, shopStocks) {
   const stock = shopStocks[shopId]?.[itemId] ?? 0;
   if (stock <= 0) return { success: false, message: '目前缺貨' };
 
-  const price = itemDef.price;
+  const price = Math.ceil(itemDef.price * priceMultiplier);
   if (player.gold < price) return { success: false, message: '金幣不足！' };
 
   player.gold -= price;
   shopStocks[shopId][itemId] = Math.max(0, stock - 1);
 
-  return { success: true, price, message: '' };
+  return { success: true, price, basePrice: itemDef.price, priceMultiplier, message: '' };
 }
 
 // ── 工具 ──────────────────────────────────────

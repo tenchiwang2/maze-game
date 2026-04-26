@@ -24,6 +24,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 60, exp: 80, items: [{ itemId: 'health_potion', qty: 2 }] },
+    karmaReward: 20,
+    reputationReward: { nation: 'ys', amount: 30 },
   },
 
   {
@@ -38,6 +40,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 10080,  // 7 天
     reward: { gold: 200, exp: 120, items: [{ itemId: 'tower_emblem', qty: 1 }] },
+    karmaReward: 15,
+    reputationReward: { nation: 'ys', amount: 25 },
   },
 
   {
@@ -53,6 +57,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 120, exp: 70, items: [{ itemId: 'iron_sword', qty: 1 }] },
+    karmaReward: 25,
+    reputationReward: { nation: 'ys', amount: 40 },
   },
 
   // ── 沙漠帝國 ──────────────────────────────────────────────────────────────
@@ -71,6 +77,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 20160,  // 14 天
     reward: { gold: 150, exp: 100, items: [{ itemId: 'steel_sword', qty: 1 }] },
+    karmaReward: 20,
+    reputationReward: { nation: 'desert', amount: 60 },
   },
 
   {
@@ -86,6 +94,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 20160,  // 14 天（跨區遠距離）
     reward: { gold: 200, exp: 80, items: [] },
+    karmaReward: 15,
+    reputationReward: { nation: 'desert', amount: 50 },
   },
 
   {
@@ -100,6 +110,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 10080,  // 7 天
     reward: { gold: 100, exp: 90, items: [{ itemId: 'health_potion', qty: 4 }] },
+    karmaReward: 10,
+    reputationReward: { nation: 'desert', amount: 35 },
   },
 
   // ── 雪域聯盟 ──────────────────────────────────────────────────────────────
@@ -118,6 +130,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 80, exp: 50, items: [{ itemId: 'health_potion', qty: 3 }] },
+    karmaReward: 25,
+    reputationReward: { nation: 'snow', amount: 45 },
   },
 
   {
@@ -134,6 +148,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 90, exp: 60, items: [{ itemId: 'hi_potion', qty: 1 }] },
+    karmaReward: 20,
+    reputationReward: { nation: 'snow', amount: 40 },
   },
 
   // ── 採集任務 ───────────────────────────────────────────────────────────────
@@ -151,6 +167,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 2880,   // 2 天
     reward: { gold: 70, exp: 60, items: [{ itemId: 'health_potion', qty: 2 }] },
+    karmaReward: 15,
+    reputationReward: { nation: 'ys', amount: 25 },
   },
 
   {
@@ -167,6 +185,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 7200,   // 5 天
     reward: { gold: 140, exp: 95, items: [{ itemId: 'mp_potion', qty: 2 }] },
+    karmaReward: 20,
+    reputationReward: { nation: 'desert', amount: 40 },
   },
 
   {
@@ -183,6 +203,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 10080,  // 7 天
     reward: { gold: 200, exp: 130, items: [{ itemId: 'hi_potion', qty: 1 }] },
+    karmaReward: 20,
+    reputationReward: { nation: 'ys', amount: 35 },
   },
 
   {
@@ -199,6 +221,8 @@ export const QUEST_DEFS = [
     ],
     timeLimitMins: 4320,   // 3 天
     reward: { gold: 110, exp: 75, items: [{ itemId: 'health_potion', qty: 3 }] },
+    karmaReward: 25,
+    reputationReward: { nation: 'snow', amount: 45 },
   },
 
 ];

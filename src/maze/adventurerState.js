@@ -60,6 +60,93 @@ export const AI_STATE = {
 };
 
 // ─────────────────────────────────────────────
+//  NPC 職業 → 冒險者職業類別映射
+// ─────────────────────────────────────────────
+export const PROFESSION_CLASS_MAP = {
+  // 統治者／重甲
+  king:          'heavy',
+  chief:         'heavy',
+  sultan:        'heavy',
+  // 戰士系
+  knight:        'warrior',
+  guard:         'warrior',
+  rebel:         'warrior',
+  bounty_hunter: 'warrior',
+  rogue_hunter:  'warrior',
+  bandit:        'warrior',
+  outlaw:        'warrior',
+  desert_bandit: 'warrior',
+  ice_pirate:    'warrior',
+  slave_trader:  'warrior',
+  // 遠程 / 偵察系
+  captain:       'archer',
+  hunter:        'archer',
+  fisherman:     'archer',
+  caravan:       'archer',
+  adventurer:    'archer',
+  // 法術 / 知識系
+  scholar:       'mage',
+  ice_mage:      'mage',
+  shaman:        'mage',
+  cult_priest:   'mage',
+  snow_witch:    'mage',
+  mysterious:    'mage',
+  // 暗影 / 情報系
+  assassin:      'assassin',
+  spy:           'assassin',
+  informant:     'assassin',
+  forger:        'assassin',
+  betrayer:      'assassin',
+  black_market:  'assassin',
+  // 交涉 / 支援系
+  merchant:      'healer',
+  innkeeper:     'healer',
+  corrupt_noble: 'healer',
+};
+
+// 依職業給予對應金幣起始值
+const PROFESSION_GOLD = {
+  king: 500, sultan: 500, chief: 400,
+  merchant: 300, caravan: 250, black_market: 200,
+  knight: 150, captain: 150, corrupt_noble: 180,
+};
+
+// ─────────────────────────────────────────────
+//  npcToAdventurer(npcDef, npcRuntime?)
+//
+//  將世界 NPC 定義轉換為可操控的冒險者狀態。
+//  npcRuntime = g.current.worldNPCs 中對應的執行時物件
+//               （有 wx/wy/homeWx/homeWy）
+// ─────────────────────────────────────────────
+export function npcToAdventurer(npcDef, npcRuntime) {
+  const className = PROFESSION_CLASS_MAP[npcDef.profession] ?? 'warrior';
+
+  const adv = createAdventurer({
+    id:         npcDef.id,
+    name:       npcDef.name,
+    className,
+    portrait:   npcDef.icon,
+    isPlayer:   false,
+    homeWX:     npcRuntime?.homeWx ?? 36,
+    homeWY:     npcRuntime?.homeWy ?? 24,
+    homeTownId: npcDef.homeTownId ?? null,
+    startGold:  PROFESSION_GOLD[npcDef.profession] ?? 80,
+    lore:       `${npcDef.profession}（${npcDef.nation ?? '無國籍'}）`,
+  });
+
+  // NPC 專屬欄位
+  adv.isNPCAdventurer = true;
+  adv.npcProfession   = npcDef.profession;
+  adv.npcAlignment    = npcDef.alignment;
+  adv.npcNation       = npcDef.nation ?? null;
+  // 初始位置設在 NPC 目前所在位置
+  adv.currentWX       = npcRuntime?.wx ?? adv.homeWX;
+  adv.currentWY       = npcRuntime?.wy ?? adv.homeWY;
+
+  return adv;
+}
+
+// ─────────────────────────────────────────────
 //  createAdventurer(def)
 //
 //  def 格式：
@@ -130,6 +217,10 @@ export function createAdventurer(def) {
     lastLogTime:       0,           // 上次記錄的遊戲分鐘數
     totalDungeons:     0,           // 累計進入地城次數
     totalGoldEarned:   0,           // 累計獲得金幣
+
+    // ── 道德 / 名聲 ──────────────────────────
+    karma:       0,                    // 善惡質 -1000 ~ +1000
+    reputation:  { ys: 0, desert: 0, snow: 0 }, // 各國名聲
 
     // ── 狀態旗標 ─────────────────────────────
     isAlive:     true,

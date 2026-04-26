@@ -43,6 +43,7 @@ export default function ShopPanel({
   supplyQuests,
   npcJobs,
   totalGameMins,
+  priceMultiplier = 1.0,
   onClose,
   onBuy,
   onAcceptQuest,   // (questId) → void
@@ -56,11 +57,12 @@ export default function ShopPanel({
   // ── 購買 ──
   function handleBuy(itemId) {
     if (!shopStocks || !shopId) return;
-    const result = buyFromShop(player, shopId, itemId, shopStocks);
+    const result = buyFromShop(player, shopId, itemId, shopStocks, priceMultiplier);
     if (!result.success) { setMsg(result.message); return; }
     const item = ITEMS[itemId];
     addItem(player, itemId, 1);
-    setMsg(`購買了 ${item?.name ?? itemId}（-${result.price} 金幣）`);
+    const discountNote = priceMultiplier < 1.0 ? ` 🎖折扣` : priceMultiplier > 1.0 ? ` ⚠加價` : '';
+    setMsg(`購買了 ${item?.name ?? itemId}（-${result.price} 金幣${discountNote}）`);
     onBuy?.(itemId, result.price);
     onPlayerUpdate?.();
   }
@@ -144,12 +146,16 @@ export default function ShopPanel({
       {tab === 'buy' && (
         <div style={{ maxHeight: 240, overflowY: 'auto' }}>
           {shopDef.inventory.map(itemDef => {
-            const { itemId, price } = itemDef;
+            const { itemId } = itemDef;
+            const basePrice  = itemDef.price;
+            const price      = Math.ceil(basePrice * priceMultiplier);
             const item     = ITEMS[itemId];
             if (!item) return null;
             const stock    = shopStocks ? getStock(shopId, itemId, shopStocks) : Infinity;
             const inStock  = stock > 0;
             const canAfford = player.gold >= price && inStock;
+            const hasDiscount = priceMultiplier < 0.99;
+            const hasSurcharge = priceMultiplier > 1.01;
             const remaining = craftingQueue
               ? getCraftingProgress(shopId, itemId, craftingQueue, totalGameMins ?? 0)
               : null;
@@ -174,13 +180,24 @@ export default function ShopPanel({
                     )}
                   </div>
                 </div>
-                <button onClick={() => handleBuy(itemId)} disabled={!canAfford} style={{
-                  fontSize: 11, padding: '4px 10px', borderRadius: 5,
-                  cursor: canAfford ? 'pointer' : 'not-allowed',
-                  background: canAfford ? 'rgba(200,160,40,0.25)' : 'rgba(50,50,50,0.4)',
-                  border: `0.5px solid ${canAfford ? 'rgba(200,160,40,0.6)' : '#444'}`,
-                  color: canAfford ? '#ffd060' : '#666', whiteSpace: 'nowrap',
-                }}>{price} G</button>
+                <div style={{ textAlign: 'right', minWidth: 54 }}>
+                  {hasDiscount && (
+                    <div style={{ fontSize: 9, color: '#60d090', textDecoration: 'line-through', lineHeight: 1.1 }}>
+                      {basePrice} G
+                    </div>
+                  )}
+                  {hasSurcharge && (
+                    <div style={{ fontSize: 9, color: '#ff9944', lineHeight: 1.1 }}>⚠ 加價</div>
+                  )}
+                  <button onClick={() => handleBuy(itemId)} disabled={!canAfford} style={{
+                    fontSize: 11, padding: '4px 10px', borderRadius: 5,
+                    cursor: canAfford ? 'pointer' : 'not-allowed',
+                    background: canAfford ? 'rgba(200,160,40,0.25)' : 'rgba(50,50,50,0.4)',
+                    border: `0.5px solid ${canAfford ? 'rgba(200,160,40,0.6)' : '#444'}`,
+                    color: hasDiscount ? '#60d090' : hasSurcharge ? '#ff9944' : canAfford ? '#ffd060' : '#666',
+                    whiteSpace: 'nowrap',
+                  }}>{price} G</button>
+                </div>
               </div>
             );
           })}

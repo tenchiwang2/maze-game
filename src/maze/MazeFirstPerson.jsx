@@ -19,8 +19,15 @@ import { NPC_DEFS } from './world/npcs.js';
 import { initNPCs, updateNPCs, getNearbyNPC, getHostileNPCsNear } from './npcSystem.js';
 import { createPlayer, addItem, addQuest, claimReward, checkQuestStep, checkExpiredQuests, gainExp, hasItem } from './playerState.jsx';
 import { initAdventurers, DEFAULT_ACTIVE_ID, ADVENTURER_DEFS } from './adventurers.js';
-import { adventurerLog } from './adventurerState.js';
+import { adventurerLog, npcToAdventurer } from './adventurerState.js';
 import { tickAdventurers } from './adventurerAI.js';
+import {
+  applyQuestMoralRewards, applyNPCKillMoral,
+  adjustKarma, adjustReputation,
+  getShopPriceMultiplier, isNationHostileToPlayer,
+  checkNPCAccess,
+  NATION_LABEL_TO_KEY,
+} from './reputationSystem.js';
 import {
   initShopStocks, checkRestockNeeds, processCraftingQueue,
   generateSupplyQuests, acceptSupplyQuest, tryDeliverSupplyQuests, checkExpiredSupplyQuests,
@@ -532,6 +539,7 @@ export default function MazeFirstPerson() {
   const [nearbyLocation, setNearbyLocation]   = useState(null);
   const [activeDialogue, setActiveDialogue]   = useState(null); // dialogueId
   const [activeShop, setActiveShop]           = useState(null); // shopId
+  const [shopPriceMultiplier, setShopPriceMultiplier] = useState(1.0);
   const [activeCombat, setActiveCombat]       = useState(null); // enemyId
   const [showInventory, setShowInventory]     = useState(false);
   const [showStats,     setShowStats]         = useState(false);
@@ -629,6 +637,12 @@ export default function MazeFirstPerson() {
       addToast({ type: 'message', icon: '📜', title: ev.text, duration: 3000 });
     }
     if (ev.type === 'npc' && ev.dialogueId) {
+      // 名聲 / 善惡質門檻檢查
+      const access = checkNPCAccess(ev, playerRef.current);
+      if (!access.ok) {
+        addToast({ type: 'warn', icon: '🚫', title: `${ev.text || 'NPC'} 拒絕你`, body: access.reason, duration: 2500 });
+        return;
+      }
       g.current.uiPaused = true;
       // 優先檢查：是否有完成但未領獎的任務可向此 NPC 交差
       if (tryClaimQuest(ev.dialogueId)) {
@@ -641,6 +655,10 @@ export default function MazeFirstPerson() {
     if (ev.type === 'shop' && ev.shopId) {
       g.current.uiPaused = true;
       setActiveShop(ev.shopId);
+      // 計算名聲折扣
+      const activeLoc = worldLocationsRef.current?.find(l => l.id === g.current.activeLocationId);
+      const shopNation = NATION_LABEL_TO_KEY[activeLoc?.nationLabel] ?? null;
+      setShopPriceMultiplier(getShopPriceMultiplier(playerRef.current, shopNation));
       addToast({ type: 'shop', icon: '🛒', title: ev.text || '商店', body: '進入商店', duration: 1800 });
     }
     if (ev.type === 'combat' && ev.enemyId) {
@@ -926,6 +944,39 @@ export default function MazeFirstPerson() {
     addToast({ type: 'system', icon: '⏰', title: `時間快進 +${mins}分`, duration: 1500 });
   }
 
+  // ── 將 NPC 冒險者重新放回世界地圖 ──────────
+  function reInsertNPCToWorld(advId, wx, wy) {
+    const s = g.current;
+    if (!s.worldNPCs) return;
+    // 已存在就不重複插入
+    if (s.worldNPCs.some(n => n.id === advId)) return;
+
+    const npcDef = NPC_DEFS.find(d => d.id === advId);
+    if (!npcDef) return;
+
+    const locations = worldLocationsRef.current ?? [];
+    const home = locations.find(l => l.id === npcDef.homeTownId);
+    const homeWx = home ? home.wx + 0.5 : wx;
+    const homeWy = home ? home.wy + 0.5 : wy;
+
+    const resolvedWaypoints = (npcDef.waypoints ?? []).map(tid => {
+      const loc = locations.find(l => l.id === tid);
+      return loc ? { wx: loc.wx + 0.5, wy: loc.wy + 0.5 } : null;
+    }).filter(Boolean);
+
+    s.worldNPCs.push({
+      ...npcDef,
+      wx, wy,
+      homeWx, homeWy,
+      targetWx: null, targetWy: null,
+      state: 'idle',
+      stateTimer: 15 + Math.random() * 30,
+      waypointIdx: 0,
+      resolvedWaypoints,
+      speed: npcDef.alignment === 'hostile' ? 0.9 : 0.6,
+    });
+  }
+
   function debugSwitchAdventurer(newId) {
     if (newId === activeAdvId) return;
     const s = g.current;
@@ -934,37 +985,51 @@ export default function MazeFirstPerson() {
     const cur = adventurersRef.current[activeAdvId];
     if (cur) {
       Object.assign(cur, playerRef.current);
-      cur.id = activeAdvId;          // 確保 id 不被覆蓋
+      cur.id = activeAdvId;
       cur.isActive = false;
-      // 儲存當前位置
       cur.currentWX = s.wx;
       cur.currentWY = s.wy;
+
+      // 若目前操控的是 NPC 冒險者 → 切換離開時放回世界
+      if (cur.isNPCAdventurer) {
+        reInsertNPCToWorld(activeAdvId, s.wx, s.wy);
+      }
     }
 
-    // 2. 載入新冒險者
+    // 2. 若目標是世界 NPC（尚未轉換為冒險者）→ 首次建立 RPG 狀態
+    if (!adventurersRef.current[newId]) {
+      const npcRuntime = s.worldNPCs?.find(n => n.id === newId);
+      const npcDef = NPC_DEFS.find(d => d.id === newId);
+      if (!npcDef) return;
+      adventurersRef.current[newId] = npcToAdventurer(npcDef, npcRuntime);
+    }
+
+    // 3. 從世界 NPC 列表移除（避免繼續 AI 漫遊）
+    if (s.worldNPCs) {
+      const idx = s.worldNPCs.findIndex(n => n.id === newId);
+      if (idx >= 0) s.worldNPCs.splice(idx, 1);
+    }
+
+    // 4. 載入新角色
     const next = adventurersRef.current[newId];
-    if (!next) return;
     next.isActive = true;
     Object.assign(playerRef.current, next);
     playerRef.current.id = next.id;
 
-    // 3. 若在大地圖，移動到新冒險者的位置
+    // 5. 若在大地圖，傳送到該角色目前位置
     if (s.gameMode === 'OVERWORLD') {
       s.wx = next.currentWX;
       s.wy = next.currentWY;
     }
 
-    // 4. 更新 React state
+    // 6. 更新 React state
     setActiveAdvId(newId);
     setPlayerStats({ ...playerRef.current });
     setQuestLog(playerRef.current.quests.map(q => ({ ...q })));
     setAdventurerList(Object.values(adventurersRef.current));
 
-    const def = ADVENTURER_DEFS.find(d => d.id === newId);
+    adventurerLog(next, `玩家切換操控此角色`, s.totalGameMins ?? 0);
     addToast({ type: 'system', icon: next.portrait, title: `切換至 ${next.name}（${next.classLabel}）`, duration: 2000 });
-
-    // 5. 記錄操作日誌
-    adventurerLog(next, `玩家切換操控此角色`, g.current.totalGameMins ?? 0);
   }
 
   // ── 任務地城：討伐完成後移除入口 ───────────
@@ -1216,7 +1281,19 @@ export default function MazeFirstPerson() {
 
     // 敵對 NPC 觸發戰鬥（必須玩家有移動才觸發）
     if (!s.uiPaused && s.interactCooldown === 0 && s.playerMovedThisFrame) {
-      const hostiles = getHostileNPCsNear(s.worldNPCs, s.wx, s.wy, 1.0);
+      // 名聲通緝：衛兵 / 騎士類 NPC 若玩家在該國被通緝，也視為敵對
+      const p = playerRef.current;
+      const repHostiles = s.worldNPCs.filter(n =>
+        (n.profession === 'guard' || n.profession === 'knight') &&
+        n.nation && isNationHostileToPlayer(p, n.nation) &&
+        Math.hypot(n.wx - s.wx, n.wy - s.wy) < 1.0 &&
+        n.enemyId
+      );
+
+      const hostiles = [
+        ...getHostileNPCsNear(s.worldNPCs, s.wx, s.wy, 1.0),
+        ...repHostiles.filter(n => n.alignment !== 'hostile'), // 避免重複
+      ];
       if (hostiles.length > 0) {
         const h = hostiles[0];
         // 從陣列中移除，避免重複觸發
@@ -1224,6 +1301,7 @@ export default function MazeFirstPerson() {
         if (idx >= 0) s.worldNPCs.splice(idx, 1);
         s.uiPaused = true;
         s.interactCooldown = 80;
+        s.pendingNPCKill = { alignment: h.alignment, nation: h.nation ?? null };
         emit('combat:start', { enemyId: h.enemyId });
         addToast({ type: 'combat', icon: '⚔️', title: `遭遇 ${h.name}！`, duration: 1800 });
       }
@@ -1278,10 +1356,15 @@ export default function MazeFirstPerson() {
             // 任務逾時檢查
             const expired = checkExpiredQuests(playerRef.current, QUEST_DEFS, s.totalGameMins);
             if (expired.length > 0) {
+              expired.forEach(def => {
+                // 任務失敗：扣名聲 -15
+                if (def.reputationReward?.nation) {
+                  adjustReputation(playerRef.current, def.reputationReward.nation, -15);
+                }
+                addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 });
+              });
               setQuestLog(playerRef.current.quests.map(q => ({ ...q })));
-              expired.forEach(def =>
-                addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 })
-              );
+              setPlayerStats({ ...playerRef.current });
             }
             // 供應鏈：補貨任務生成 + NPC 接單 + 逾時檢查 + 自動補貨兜底
             {
@@ -1370,9 +1453,15 @@ export default function MazeFirstPerson() {
                 const idx = s.worldNPCs.indexOf(nearNPC);
                 if (idx >= 0) s.worldNPCs.splice(idx, 1);
                 s.uiPaused = true;
+                s.pendingNPCKill = { alignment: nearNPC.alignment, nation: nearNPC.nation ?? null };
                 emit('combat:start', { enemyId: nearNPC.enemyId });
                 addToast({ type: 'combat', icon: '⚔️', title: `挑戰 ${nearNPC.name}！`, duration: 1800 });
               } else if (nearNPC.dialogueId) {
+                // 名聲 / 善惡質門檻檢查
+                const access = checkNPCAccess(nearNPC, playerRef.current);
+                if (!access.ok) {
+                  addToast({ type: 'warn', icon: '🚫', title: `${nearNPC.name} 拒絕你`, body: access.reason, duration: 2500 });
+                } else {
                 s.uiPaused = true;
                 const p = playerRef.current;
                 // report 步驟：找到 NPC 時推進任務進度
@@ -1386,6 +1475,7 @@ export default function MazeFirstPerson() {
                   addToast({ type: 'npc', icon: nearNPC.icon, title: nearNPC.name, duration: 1500 });
                 }
                 setQuestLog(p.quests.map(q => ({ ...q })));
+                } // end access.ok
               }
             }
           }
@@ -1435,10 +1525,12 @@ export default function MazeFirstPerson() {
           // 任務逾時檢查
           const expired = checkExpiredQuests(playerRef.current, QUEST_DEFS, s.totalGameMins);
           if (expired.length > 0) {
+            expired.forEach(def => {
+              if (def.reputationReward?.nation) adjustReputation(playerRef.current, def.reputationReward.nation, -15);
+              addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 });
+            });
             setQuestLog(playerRef.current.quests.map(q => ({ ...q })));
-            expired.forEach(def =>
-              addToast({ type: 'quest', icon: '💀', title: `任務失敗：${def.title}`, body: '超過期限', duration: 3000 })
-            );
+            setPlayerStats({ ...playerRef.current });
           }
           // 供應鏈：補貨任務 + NPC + 自動補貨（地城內也流逝時間）
           {
@@ -1929,6 +2021,7 @@ export default function MazeFirstPerson() {
           const { leveled, messages } = gainExp(p, r.exp);
           if (leveled) addToast({ type: 'levelup', icon: '⬆', title: messages[0] ?? '升等！', duration: 3000 });
         }
+        applyQuestMoralRewards(p, claimable);
         setPlayerStats({ ...p });
         setQuestLog(p.quests.map(q => ({ ...q })));
         setActiveQuestOffer(null);
@@ -1983,6 +2076,15 @@ export default function MazeFirstPerson() {
         setLevelUpMsg(levelMsg);
         setTimeout(() => setLevelUpMsg(''), 3000);
         addToast({ type: 'message', icon: '⭐', title: levelMsg, duration: 3500 });
+      }
+
+      // NPC 擊殺：套用善惡 / 名聲變化
+      if (result?.won && g.current.pendingNPCKill) {
+        applyNPCKillMoral(p, g.current.pendingNPCKill);
+        g.current.pendingNPCKill = null;
+        setPlayerStats({ ...p });
+      } else {
+        g.current.pendingNPCKill = null;
       }
 
       // 戰鬥結果通知
@@ -2088,10 +2190,19 @@ export default function MazeFirstPerson() {
           onAddGold={debugAddGold}
           onFillHpMp={debugFillHpMp}
           onAddExp={debugAddExp}
+          onAdjustKarma={delta => {
+            adjustKarma(playerRef.current, delta);
+            setPlayerStats({ ...playerRef.current });
+          }}
+          onAdjustReputation={(nation, delta) => {
+            adjustReputation(playerRef.current, nation, delta);
+            setPlayerStats({ ...playerRef.current });
+          }}
           playerStats={playerStats}
           adventurerList={adventurerList}
           activeAdvId={activeAdvId}
           onSwitchAdventurer={debugSwitchAdventurer}
+          npcDefs={NPC_DEFS}
           locations={worldLocationsRef.current}
           onTeleport={debugTeleport}
           gameTime={gameTime}
@@ -2158,6 +2269,7 @@ export default function MazeFirstPerson() {
               supplyQuests={supplyQuestsRef.current}
               npcJobs={npcJobsRef.current}
               totalGameMins={g.current.totalGameMins}
+              priceMultiplier={shopPriceMultiplier}
               onClose={closeShop}
               onBuy={() => {
                 const newSQ = generateSupplyQuests(shopStocksRef.current, supplyQuestsRef.current, g.current.totalGameMins);

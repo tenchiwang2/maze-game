@@ -67,18 +67,21 @@ export const NPC_DEFS = [
     icon: '👑', dialogueId: 'king_speech',
     moveType: 'STATIONARY', alignment: 'friendly',
     schedule: { activeStart: 8, activeEnd: 18 },
+    minReputation: { nation: 'ys', amount: 0 },
   },
   {
     id: 'knight_ys_1', name: '皇家騎士 艾倫', profession: 'knight',
     nation: 'ys', homeTownId: 'capital_ys',
     icon: '🛡️', dialogueId: 'npc_knight_ys',
     moveType: 'REGIONAL', moveRadius: 12, alignment: 'friendly',
+    minReputation: { nation: 'ys', amount: -200 },
   },
   {
     id: 'knight_ys_2', name: '皇家騎士 席拉', profession: 'knight',
     nation: 'ys', homeTownId: 'capital_ys',
     icon: '🛡️', dialogueId: 'npc_knight_ys',
     moveType: 'REGIONAL', moveRadius: 10, alignment: 'friendly',
+    minReputation: { nation: 'ys', amount: -200 },
   },
   {
     id: 'scholar_ys', name: '王室學者 克勞斯', profession: 'scholar',
@@ -120,6 +123,7 @@ export const NPC_DEFS = [
     icon: '🐀', dialogueId: 'npc_informant',
     moveType: 'LOCAL', moveRadius: 4, alignment: 'neutral',
     schedule: { activeStart: 20, activeEnd: 4 }, // 只在夜間出現
+    maxKarma: 100, // 只信任非聖人的人
   },
   {
     id: 'rebel_leader_ys', name: '叛軍首領 雷納斯', profession: 'rebel',
@@ -180,6 +184,7 @@ export const NPC_DEFS = [
     icon: '👑', dialogueId: 'sultan_speech',
     moveType: 'STATIONARY', alignment: 'friendly',
     schedule: { activeStart: 9, activeEnd: 17 },
+    minReputation: { nation: 'desert', amount: 0 },
   },
   {
     id: 'guard_desert_1', name: '帝國衛兵 法魯克', profession: 'guard',
@@ -198,6 +203,7 @@ export const NPC_DEFS = [
     nation: 'desert', homeTownId: 'capital_desert',
     icon: '🕵️', dialogueId: 'npc_spy',
     moveType: 'FREE_ROAM', alignment: 'neutral',
+    maxKarma: 100, // 密探只接觸非聖人
   },
 
   // ── 綠洲鎮 ──
@@ -227,6 +233,7 @@ export const NPC_DEFS = [
     icon: '🕯️', dialogueId: 'npc_cult_priest',
     moveType: 'LOCAL', moveRadius: 6, alignment: 'neutral',
     schedule: { activeStart: 20, activeEnd: 6 },
+    maxKarma: -100, // 邪教祭司只與惡人交談
   },
   {
     id: 'bounty_hunter_desert', name: '賞金獵人 達吾德', profession: 'bounty_hunter',
@@ -267,6 +274,7 @@ export const NPC_DEFS = [
     icon: '👑', dialogueId: 'frost_chief',
     moveType: 'STATIONARY', alignment: 'friendly',
     schedule: { activeStart: 8, activeEnd: 18 },
+    minReputation: { nation: 'snow', amount: 0 },
   },
   {
     id: 'ice_mage_snow', name: '冰法師 艾洛拉', profession: 'ice_mage',
@@ -286,6 +294,7 @@ export const NPC_DEFS = [
     icon: '🔱', dialogueId: 'npc_betrayer',
     moveType: 'LOCAL', moveRadius: 6, alignment: 'neutral',
     schedule: { activeStart: 20, activeEnd: 5 },
+    minReputation: { nation: 'snow', amount: -600 }, // 雪域通緝才肯說話
   },
 
   // ── 冰湖城 ──
@@ -375,6 +384,7 @@ export const NPC_DEFS = [
     moveType: 'LONG_HAUL', alignment: 'neutral',
     schedule: { activeStart: 20, activeEnd: 5 },
     waypoints: ['town_riverside', 'town_oasis', 'town_icelake'],
+    maxKarma: 0, // 黑市只做灰暗之人的生意
   },
   {
     id: 'mysterious_wanderer', name: '神秘旅人', profession: 'mysterious',

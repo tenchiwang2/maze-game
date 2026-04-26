@@ -21,7 +21,8 @@ export const WORLD_DEF = {
           {
             r: 1, c: 1, w: 2, h: 2,
             events: [
-              { id: 'king_npc', dr: 0, dc: 0, type: 'npc', text: '國王', icon: '@', repeatable: true, dialogueId: 'king_speech' },
+              { id: 'king_npc', dr: 0, dc: 0, type: 'npc', text: '國王', icon: '@', repeatable: true, dialogueId: 'king_speech',
+                minReputation: { nation: 'ys', amount: 0 } },
             ],
           },
           // Room B: r:1,c:5,w:1,h:2
@@ -187,7 +188,8 @@ export const WORLD_DEF = {
           {
             r: 1, c: 1, w: 2, h: 2,
             events: [
-              { id: 'sultan_npc', dr: 0, dc: 0, type: 'npc', text: '沙漠蘇丹', icon: '@', repeatable: true, dialogueId: 'sultan_speech' },
+              { id: 'sultan_npc', dr: 0, dc: 0, type: 'npc', text: '沙漠蘇丹', icon: '@', repeatable: true, dialogueId: 'sultan_speech',
+                minReputation: { nation: 'desert', amount: 0 } },
             ],
           },
           // Room B: r:1,c:5,w:1,h:2
@@ -308,7 +310,8 @@ export const WORLD_DEF = {
           {
             r: 1, c: 1, w: 2, h: 2,
             events: [
-              { id: 'frost_chief', dr: 0, dc: 0, type: 'npc', text: '冰雪酋長', icon: '@', repeatable: true, dialogueId: 'frost_chief' },
+              { id: 'frost_chief', dr: 0, dc: 0, type: 'npc', text: '冰雪酋長', icon: '@', repeatable: true, dialogueId: 'frost_chief',
+                minReputation: { nation: 'snow', amount: 0 } },
             ],
           },
           // Room B: r:1,c:5,w:1,h:2

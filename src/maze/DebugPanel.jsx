@@ -6,6 +6,9 @@
 import { useState } from 'react';
 import { FACTORIES, FACTORY_IDS } from './mazeFactory.jsx';
 import { WORLD_FACTORIES } from './worldFactory.jsx';
+import { getAdventurerStatusLabel, getAdventurerStatusColor } from './adventurerState.js';
+import { PROFESSIONS } from './world/npcs.js';
+import { getKarmaInfo, getRepInfo, NATIONS, NATION_LABELS, NATION_COLORS } from './reputationSystem.js';
 
 // ── 面板分頁 ──────────────────────────────────
 const TABS = [
@@ -197,15 +200,18 @@ export default function DebugPanel({
   factoryMode, setFactoryMode,
   onRegenMaze,
   // cheats
-  cheatFullMap, setCheatFullMap,
+  cheatFullMap, onToggleFullMap,
   onAddGold,
   onFillHpMp,
   onAddExp,
+  onAdjustKarma,
+  onAdjustReputation,
   playerStats,
   // adventurers
   adventurerList,
   activeAdvId,
   onSwitchAdventurer,
+  npcDefs,
   // teleport
   locations,
   onTeleport,
@@ -216,6 +222,7 @@ export default function DebugPanel({
   onClose,
 }) {
   const [tab, setTab] = useState('world');
+  const [selectedAdvId, setSelectedAdvId] = useState(null);
 
   return (
     <div style={S.panel} onClick={e => e.stopPropagation()}>
@@ -240,66 +247,290 @@ export default function DebugPanel({
         {/* ── 角色切換 ─────────────────────────── */}
         {tab === 'char' && (
           <div>
-            <div style={S.sectionLabel}>冒險者列表（點擊切換主控）</div>
+            <div style={S.sectionLabel}>冒險者列表（點擊展開詳情）</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {(adventurerList ?? []).map(adv => {
-                const isActive = adv.id === activeAdvId;
-                const hpPct = adv.maxHp > 0 ? adv.hp / adv.maxHp : 0;
+                const isActive  = adv.id === activeAdvId;
+                const isExpanded = adv.id === selectedAdvId;
+                const hpPct  = adv.maxHp > 0 ? adv.hp / adv.maxHp : 0;
                 const hpColor = hpPct > 0.5 ? '#60d090' : hpPct > 0.25 ? '#ffd060' : '#ff6666';
+                const statusLabel = getAdventurerStatusLabel(adv);
+                const statusColor = getAdventurerStatusColor(adv);
+
                 return (
-                  <button
-                    key={adv.id}
-                    onClick={() => onSwitchAdventurer?.(adv.id)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 10,
-                      padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
-                      textAlign: 'left',
-                      background: isActive ? 'rgba(80,160,255,0.16)' : 'rgba(30,35,50,0.60)',
-                      border: isActive
-                        ? '1.5px solid rgba(80,160,255,0.50)'
+                  <div key={adv.id} style={{
+                    borderRadius: 8,
+                    background: isActive ? 'rgba(80,160,255,0.13)' : 'rgba(30,35,50,0.60)',
+                    border: isActive
+                      ? '1.5px solid rgba(80,160,255,0.45)'
+                      : isExpanded
+                        ? '1px solid rgba(120,140,180,0.45)'
                         : '1px solid rgba(70,80,100,0.35)',
-                    }}
-                  >
-                    {/* 頭像 */}
-                    <span style={{ fontSize: 22, lineHeight: 1, minWidth: 28, textAlign: 'center' }}>
-                      {adv.portrait}
-                    </span>
-                    {/* 資訊 */}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 3 }}>
-                        <span style={{
-                          fontSize: 13, fontWeight: 600,
-                          color: isActive ? '#80c8ff' : 'var(--color-text-primary)',
+                    overflow: 'hidden',
+                  }}>
+                    {/* ── 卡片頭部（可點擊折疊） ── */}
+                    <button
+                      onClick={() => setSelectedAdvId(isExpanded ? null : adv.id)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        width: '100%', padding: '8px 12px',
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        textAlign: 'left',
+                      }}
+                    >
+                      {/* 頭像 */}
+                      <span style={{ fontSize: 22, lineHeight: 1, minWidth: 28, textAlign: 'center' }}>
+                        {adv.portrait}
+                      </span>
+                      {/* 資訊 */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 3 }}>
+                          <span style={{
+                            fontSize: 13, fontWeight: 600,
+                            color: isActive ? '#80c8ff' : 'var(--color-text-primary)',
+                          }}>
+                            {adv.name}
+                          </span>
+                          <span style={{ fontSize: 10, color: adv.classColor ?? '#888' }}>
+                            {adv.classIcon} {adv.classLabel}
+                          </span>
+                          <span style={{ fontSize: 10, color: 'rgba(160,170,200,0.55)', marginLeft: 'auto' }}>
+                            Lv.{adv.lv}
+                          </span>
+                        </div>
+                        {/* HP 血條 */}
+                        <div style={{ height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, overflow: 'hidden', marginBottom: 3 }}>
+                          <div style={{ height: '100%', width: `${hpPct * 100}%`, background: hpColor, borderRadius: 2 }} />
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, fontSize: 10, color: 'rgba(160,170,200,0.60)' }}>
+                          <span style={{ color: hpColor }}>❤ {adv.hp}/{adv.maxHp}</span>
+                          <span>💧 {adv.mp}/{adv.maxMp}</span>
+                          {isActive
+                            ? <span style={{ color: '#80c8ff', marginLeft: 'auto' }}>🎮 操控中</span>
+                            : <span style={{ color: statusColor, marginLeft: 'auto' }}>{statusLabel}</span>
+                          }
+                        </div>
+                      </div>
+                      {/* 折疊箭頭 */}
+                      <span style={{ fontSize: 10, color: 'rgba(160,170,200,0.40)', paddingLeft: 4 }}>
+                        {isExpanded ? '▲' : '▼'}
+                      </span>
+                    </button>
+
+                    {/* ── 展開詳情 ── */}
+                    {isExpanded && (
+                      <div style={{
+                        borderTop: '1px solid rgba(100,110,140,0.20)',
+                        padding: '10px 12px 12px',
+                      }}>
+                        {/* 屬性格 */}
+                        <div style={{
+                          display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+                          gap: '4px 0', fontSize: 11,
+                          background: 'rgba(20,25,38,0.50)',
+                          borderRadius: 6, padding: '6px 10px',
+                          marginBottom: 8,
+                          color: 'rgba(190,200,220,0.80)',
                         }}>
-                          {adv.name}
-                        </span>
-                        <span style={{ fontSize: 10, color: adv.classColor ?? '#888' }}>
-                          {adv.classIcon} {adv.classLabel}
-                        </span>
-                        <span style={{ fontSize: 10, color: 'rgba(160,170,200,0.55)', marginLeft: 'auto' }}>
-                          Lv.{adv.lv}
-                        </span>
+                          <span>⚔ ATK {adv.atk ?? '—'}</span>
+                          <span>🛡 DEF {adv.def ?? '—'}</span>
+                          <span>💨 SPD {adv.spd ?? '—'}</span>
+                          <span>🏆 {adv.totalDungeons ?? 0} 次地城</span>
+                          <span style={{ gridColumn: 'span 2' }}>💰 累計 {adv.totalGoldEarned ?? 0} 金</span>
+                        </div>
+
+                        {/* HP / MP 數字條 */}
+                        <div style={{ marginBottom: 10 }}>
+                          {[
+                            { label: 'HP', cur: adv.hp, max: adv.maxHp, color: hpColor },
+                            { label: 'MP', cur: adv.mp, max: adv.maxMp, color: '#60aaff' },
+                          ].map(({ label, cur, max, color }) => (
+                            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                              <span style={{ fontSize: 10, color: 'rgba(160,170,200,0.55)', minWidth: 20 }}>{label}</span>
+                              <div style={{ flex: 1, height: 5, background: 'rgba(255,255,255,0.08)', borderRadius: 3, overflow: 'hidden' }}>
+                                <div style={{ height: '100%', width: `${max > 0 ? cur / max * 100 : 0}%`, background: color, borderRadius: 3 }} />
+                              </div>
+                              <span style={{ fontSize: 10, color, minWidth: 52, textAlign: 'right', fontFamily: 'monospace' }}>
+                                {cur}/{max}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* 行動紀錄 */}
+                        {adv.actionLog && adv.actionLog.length > 0 && (
+                          <div style={{ marginBottom: 10 }}>
+                            <div style={{ ...S.sectionLabel, marginBottom: 5 }}>近期動態</div>
+                            <div style={{
+                              background: 'rgba(15,18,28,0.70)',
+                              border: '1px solid rgba(80,90,120,0.25)',
+                              borderRadius: 6, padding: '6px 8px',
+                              maxHeight: 130, overflowY: 'auto',
+                            }}>
+                              {adv.actionLog.slice(0, 10).map((entry, i) => (
+                                <div key={i} style={{
+                                  display: 'flex', gap: 6, fontSize: 10,
+                                  color: 'rgba(180,190,215,0.75)',
+                                  marginBottom: i < adv.actionLog.length - 1 ? 4 : 0,
+                                  lineHeight: 1.4,
+                                }}>
+                                  <span style={{ color: 'rgba(150,160,180,0.45)', flexShrink: 0, fontFamily: 'monospace' }}>
+                                    {formatTimeFn ? formatTimeFn(entry.time) : `${entry.time}m`}
+                                  </span>
+                                  <span>{entry.msg}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 操控按鈕 */}
+                        {!isActive && (
+                          <button
+                            style={{
+                              ...S.btn('#80c8ff'),
+                              width: '100%', textAlign: 'center',
+                              display: 'block',
+                            }}
+                            onClick={() => {
+                              onSwitchAdventurer?.(adv.id);
+                              setSelectedAdvId(null);
+                            }}
+                          >
+                            🎮 切換操控
+                          </button>
+                        )}
+                        {isActive && (
+                          <div style={{
+                            textAlign: 'center', fontSize: 11,
+                            color: '#80c8ff', padding: '4px 0',
+                          }}>
+                            🎮 目前操控中
+                          </div>
+                        )}
                       </div>
-                      {/* HP 血條 */}
-                      <div style={{ height: 4, background: 'rgba(255,255,255,0.08)', borderRadius: 2, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${hpPct * 100}%`, background: hpColor, borderRadius: 2, transition: 'width 0.3s' }} />
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, fontSize: 10, color: 'rgba(160,170,200,0.60)', marginTop: 3 }}>
-                        <span style={{ color: hpColor }}>❤ {adv.hp}/{adv.maxHp}</span>
-                        <span>💧 {adv.mp}/{adv.maxMp}</span>
-                        <span>💰 {adv.gold}</span>
-                        {isActive && <span style={{ color: '#80c8ff', marginLeft: 'auto' }}>🎮 操控中</span>}
-                      </div>
-                    </div>
-                  </button>
+                    )}
+                  </div>
                 );
               })}
             </div>
 
-            <div style={{ marginTop: 12, fontSize: 11, color: 'rgba(160,170,190,0.45)', lineHeight: 1.6 }}>
-              切換角色後，當前角色的狀態會自動儲存。<br />
-              非操控角色未來將由 AI 自動冒險。
+            <div style={{ marginTop: 12, fontSize: 11, color: 'rgba(160,170,190,0.40)', lineHeight: 1.6 }}>
+              切換角色後，當前角色狀態自動儲存。<br />
+              非操控角色由 AI 自動冒險。
             </div>
+
+            {/* ── 世界人物 NPC ── */}
+            {npcDefs && npcDefs.length > 0 && (() => {
+              // 已轉換為冒險者的 NPC id 集合
+              const advIds = new Set((adventurerList ?? []).map(a => a.id));
+              // 未轉換的 NPC（還在世界上的身份）
+              const unconverted = npcDefs.filter(n => !advIds.has(n.id));
+              if (unconverted.length === 0) return null;
+
+              // 依國家分組
+              const groups = {};
+              for (const n of unconverted) {
+                const key = n.nation ?? '無國籍';
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(n);
+              }
+              const NATION_LABELS = { ys: '亞薩王國', desert: '沙漠帝國', snow: '雪域聯盟', '無國籍': '無國籍' };
+              const ALIGNMENT_COLOR = { friendly: '#60d090', neutral: '#ffd060', hostile: '#ff7777' };
+              const ALIGNMENT_LABEL = { friendly: '友善', neutral: '中立', hostile: '敵對' };
+
+              return (
+                <div style={{ marginTop: 16 }}>
+                  <div style={{ ...S.sectionLabel, marginBottom: 8 }}>世界人物（點擊切換操控）</div>
+                  {Object.entries(groups).map(([nation, npcs]) => (
+                    <div key={nation} style={{ marginBottom: 12 }}>
+                      <div style={{
+                        fontSize: 10, fontWeight: 600, letterSpacing: '0.08em',
+                        color: 'rgba(160,170,200,0.50)', textTransform: 'uppercase',
+                        marginBottom: 5,
+                      }}>
+                        {NATION_LABELS[nation] ?? nation}
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {npcs.map(npc => {
+                          const prof    = PROFESSIONS[npc.profession];
+                          const isSelected = npc.id === selectedAdvId;
+                          const aColor  = ALIGNMENT_COLOR[npc.alignment] ?? '#888';
+                          return (
+                            <div key={npc.id} style={{
+                              borderRadius: 7,
+                              background: isSelected ? 'rgba(60,70,100,0.70)' : 'rgba(25,30,45,0.60)',
+                              border: isSelected
+                                ? '1px solid rgba(120,140,190,0.45)'
+                                : '1px solid rgba(60,70,95,0.35)',
+                              overflow: 'hidden',
+                            }}>
+                              {/* 卡片頭 */}
+                              <button
+                                onClick={() => setSelectedAdvId(isSelected ? null : npc.id)}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: 8,
+                                  width: '100%', padding: '6px 10px',
+                                  background: 'none', border: 'none', cursor: 'pointer',
+                                  textAlign: 'left',
+                                }}
+                              >
+                                <span style={{ fontSize: 18, minWidth: 24, textAlign: 'center' }}>{npc.icon}</span>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                                      {npc.name}
+                                    </span>
+                                    <span style={{ fontSize: 10, color: prof?.color ?? '#888' }}>
+                                      {prof?.label ?? npc.profession}
+                                    </span>
+                                    <span style={{ fontSize: 10, color: aColor, marginLeft: 'auto' }}>
+                                      {ALIGNMENT_LABEL[npc.alignment] ?? ''}
+                                    </span>
+                                  </div>
+                                </div>
+                                <span style={{ fontSize: 10, color: 'rgba(160,170,200,0.35)' }}>
+                                  {isSelected ? '▲' : '▼'}
+                                </span>
+                              </button>
+
+                              {/* 展開：切換操控按鈕 */}
+                              {isSelected && (
+                                <div style={{
+                                  borderTop: '1px solid rgba(80,90,120,0.20)',
+                                  padding: '8px 10px',
+                                }}>
+                                  <div style={{
+                                    fontSize: 11, color: 'rgba(180,190,215,0.60)',
+                                    marginBottom: 7, lineHeight: 1.4,
+                                  }}>
+                                    {npc.moveType === 'STATIONARY' && '📍 固定位置'}
+                                    {npc.moveType === 'LOCAL' && `🚶 城鎮內遊走 (${npc.moveRadius ?? '?'} 格)`}
+                                    {npc.moveType === 'REGIONAL' && `🗺 區域巡邏 (${npc.moveRadius ?? '?'} 格)`}
+                                    {npc.moveType === 'LONG_HAUL' && '🐪 跨城移動'}
+                                    {npc.moveType === 'FREE_ROAM' && '🌍 全地圖漫遊'}
+                                    {npc.schedule && ` ⏰ ${npc.schedule.activeStart}:00–${npc.schedule.activeEnd}:00`}
+                                  </div>
+                                  <button
+                                    style={{ ...S.btn(aColor), width: '100%', textAlign: 'center', display: 'block' }}
+                                    onClick={() => {
+                                      onSwitchAdventurer?.(npc.id);
+                                      setSelectedAdvId(null);
+                                    }}
+                                  >
+                                    🎮 切換操控 {npc.name}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -406,7 +637,7 @@ export default function DebugPanel({
             <div style={S.row}>
               <button
                 style={cheatFullMap ? S.successBtn : S.btn()}
-                onClick={() => setCheatFullMap(v => !v)}
+                onClick={onToggleFullMap}
               >
                 {cheatFullMap ? '🗺 全圖已開啟' : '🗺 開啟全地圖'}
               </button>
@@ -436,6 +667,51 @@ export default function DebugPanel({
                 <span>⭐ Lv.{playerStats.lv} ({playerStats.exp ?? 0} EXP)</span>
               </div>
             )}
+
+            {/* ── 善惡質 ── */}
+            <div style={{ ...S.sectionLabel, marginTop: 14 }}>善惡質</div>
+            {playerStats && (() => {
+              const karma = playerStats.karma ?? 0;
+              const info  = getKarmaInfo(karma);
+              return (
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, color: info.color, marginBottom: 6, fontWeight: 600 }}>
+                    {info.icon} {info.label}（{karma > 0 ? '+' : ''}{karma}）
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    <button style={S.btn('#88ff88')} onClick={() => onAdjustKarma?.(100)}>+100 善</button>
+                    <button style={S.btn('#88ff88')} onClick={() => onAdjustKarma?.(500)}>+500 善</button>
+                    <button style={S.btn('#ff8888')} onClick={() => onAdjustKarma?.(-100)}>-100 惡</button>
+                    <button style={S.btn('#ff8888')} onClick={() => onAdjustKarma?.(-500)}>-500 惡</button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* ── 各國名聲 ── */}
+            <div style={{ ...S.sectionLabel, marginTop: 14 }}>各國名聲</div>
+            {NATIONS.map(nation => {
+              const rep  = playerStats?.reputation?.[nation] ?? 0;
+              const info = getRepInfo(rep);
+              return (
+                <div key={nation} style={{ marginBottom: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, color: NATION_COLORS[nation], fontWeight: 600 }}>
+                      {NATION_LABELS[nation]}
+                    </span>
+                    <span style={{ fontSize: 11, color: info.color }}>
+                      {info.label}（{rep > 0 ? '+' : ''}{rep}）
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                    <button style={S.btn('#60d090')} onClick={() => onAdjustReputation?.(nation, 100)}>+100</button>
+                    <button style={S.btn('#60d090')} onClick={() => onAdjustReputation?.(nation, 500)}>+500</button>
+                    <button style={S.btn('#ff8888')} onClick={() => onAdjustReputation?.(nation, -100)}>-100</button>
+                    <button style={S.btn('#ff8888')} onClick={() => onAdjustReputation?.(nation, -500)}>-500</button>
+                  </div>
+                </div>
+              );
+            })}
 
             <div style={{ ...S.sectionLabel, marginTop: 14 }}>危險操作</div>
             <div style={{ fontSize: 11, color: 'rgba(255,120,120,0.55)', marginBottom: 8 }}>
