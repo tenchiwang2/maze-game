@@ -28,6 +28,7 @@ import {
   checkNPCAccess,
   NATION_LABEL_TO_KEY,
 } from './reputationSystem.js';
+import { tickRelationshipDecay } from './relationshipSystem.js';
 import {
   initShopStocks, checkRestockNeeds, processCraftingQueue,
   generateSupplyQuests, acceptSupplyQuest, tryDeliverSupplyQuests, checkExpiredSupplyQuests,
@@ -1340,9 +1341,17 @@ export default function MazeFirstPerson() {
           if (minsGained > 0) {
             s.timeAccum -= minsGained * TIME_WORLD_PER_MIN;
             s.gameTime = advanceTime(s.gameTime, minsGained);
+            const prevDay = Math.floor((s.totalGameMins) / 1440);
             s.totalGameMins += minsGained;
             setGameTime(s.gameTime);
             tickLightBuff();
+            // 每日關係衰減
+            const newDay = Math.floor(s.totalGameMins / 1440);
+            if (newDay > prevDay) {
+              for (const adv of Object.values(adventurersRef.current)) {
+                tickRelationshipDecay(adv);
+              }
+            }
             // ★ NPC 移動只在時間推進時執行（玩家移動才觸發）
             if (s.worldNPCs?.length && worldTerrainRef.current) {
               updateNPCs(

@@ -139,9 +139,25 @@ export function npcToAdventurer(npcDef, npcRuntime) {
   adv.npcProfession   = npcDef.profession;
   adv.npcAlignment    = npcDef.alignment;
   adv.npcNation       = npcDef.nation ?? null;
+  adv.gender          = npcDef.gender ?? null;
   // 初始位置設在 NPC 目前所在位置
   adv.currentWX       = npcRuntime?.wx ?? adv.homeWX;
   adv.currentWY       = npcRuntime?.wy ?? adv.homeWY;
+
+  // 預設家族關係（兄弟姊妹等）
+  if (npcDef.family?.siblings) {
+    for (const sibId of npcDef.family.siblings) {
+      if (!adv.relationships[sibId]) {
+        adv.relationships[sibId] = {
+          type: 'family', subtype: 'sibling',
+          targetName: sibId, // 名字在取得 sibDef 後可補上
+          affinity: 50,
+          flags: { proposed: false, engaged: false, married: false },
+          history: [],
+        };
+      }
+    }
+  }
 
   return adv;
 }
@@ -221,6 +237,11 @@ export function createAdventurer(def) {
     // ── 道德 / 名聲 ──────────────────────────
     karma:       0,                    // 善惡質 -1000 ~ +1000
     reputation:  { ys: 0, desert: 0, snow: 0 }, // 各國名聲
+
+    // ── 關係系統 ─────────────────────────────
+    gender:        def.gender ?? null, // 'male' | 'female' | null
+    relationships: {},                 // { [npcId]: RelationshipRecord }
+    lastRelDecayDay: 0,                // 上次觸發衰減的遊戲日數
 
     // ── 狀態旗標 ─────────────────────────────
     isAlive:     true,
