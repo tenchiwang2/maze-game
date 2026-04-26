@@ -28,7 +28,8 @@ import {
   checkNPCAccess,
   NATION_LABEL_TO_KEY,
 } from './reputationSystem.js';
-import { tickRelationshipDecay } from './relationshipSystem.js';
+import { tickRelationshipDecay, adjustAffinity, applyFamilyImpact } from './relationshipSystem.js';
+import GiftPanel, { giftAffinityDelta } from './GiftPanel.jsx';
 import {
   initShopStocks, checkRestockNeeds, processCraftingQueue,
   generateSupplyQuests, acceptSupplyQuest, tryDeliverSupplyQuests, checkExpiredSupplyQuests,
@@ -544,6 +545,7 @@ export default function MazeFirstPerson() {
   const [activeCombat, setActiveCombat]       = useState(null); // enemyId
   const [showInventory, setShowInventory]     = useState(false);
   const [showStats,     setShowStats]         = useState(false);
+  const [giftTargetNPC, setGiftTargetNPC]     = useState(null); // { id, name, icon, ... }
   const [showCampRest,  setShowCampRest]      = useState(false);
   const [cheatFullMap,  setCheatFullMap]      = useState(false);
   const [toasts,        setToasts]            = useState([]);
@@ -645,6 +647,11 @@ export default function MazeFirstPerson() {
         return;
       }
       g.current.uiPaused = true;
+      // 地城 NPC 對話 → 好感 +3
+      const dungeonNpcDef = NPC_DEFS.find(n => n.dialogueId === ev.dialogueId);
+      if (dungeonNpcDef && dungeonNpcDef.alignment !== 'hostile') {
+        adjustAffinity(playerRef.current, dungeonNpcDef.id, +3, dungeonNpcDef.name, g.current.totalGameMins, '對話');
+      }
       // 優先檢查：是否有完成但未領獎的任務可向此 NPC 交差
       if (tryClaimQuest(ev.dialogueId)) {
         addToast({ type: 'quest', icon: '📬', title: `任務交差：${ev.text || 'NPC'}`, duration: 1800 });
@@ -1302,7 +1309,7 @@ export default function MazeFirstPerson() {
         if (idx >= 0) s.worldNPCs.splice(idx, 1);
         s.uiPaused = true;
         s.interactCooldown = 80;
-        s.pendingNPCKill = { alignment: h.alignment, nation: h.nation ?? null };
+        s.pendingNPCKill = { alignment: h.alignment, nation: h.nation ?? null, npcId: h.id };
         emit('combat:start', { enemyId: h.enemyId });
         addToast({ type: 'combat', icon: '⚔️', title: `遭遇 ${h.name}！`, duration: 1800 });
       }
@@ -1462,7 +1469,7 @@ export default function MazeFirstPerson() {
                 const idx = s.worldNPCs.indexOf(nearNPC);
                 if (idx >= 0) s.worldNPCs.splice(idx, 1);
                 s.uiPaused = true;
-                s.pendingNPCKill = { alignment: nearNPC.alignment, nation: nearNPC.nation ?? null };
+                s.pendingNPCKill = { alignment: nearNPC.alignment, nation: nearNPC.nation ?? null, npcId: nearNPC.id };
                 emit('combat:start', { enemyId: nearNPC.enemyId });
                 addToast({ type: 'combat', icon: '⚔️', title: `挑戰 ${nearNPC.name}！`, duration: 1800 });
               } else if (nearNPC.dialogueId) {
@@ -1475,6 +1482,9 @@ export default function MazeFirstPerson() {
                 const p = playerRef.current;
                 // report 步驟：找到 NPC 時推進任務進度
                 QUEST_DEFS.forEach(qd => checkQuestStep(p, qd, 'report', { npcId: nearNPC.dialogueId }));
+                // 對話 → 好感 +3（友善/中立 NPC）
+                adjustAffinity(p, nearNPC.id, +3, nearNPC.name, s.totalGameMins, '對話');
+                setPlayerStats({ ...p });
                 // 優先檢查：是否有完成但未領獎的任務可交差
                 if (tryClaimQuest(nearNPC.dialogueId)) {
                   addToast({ type: 'quest', icon: '📬', title: `任務交差：${nearNPC.name}`, duration: 1500 });
@@ -1625,6 +1635,17 @@ export default function MazeFirstPerson() {
         s.interactCooldown = 30;
         s.uiPaused = true;
         setShowQuestLog(true);
+      }
+
+      // G 鍵送禮：靠近友善/中立 NPC 時開啟送禮面板
+      if ((s.keys['KeyG'] || s.keys['g']) && s.interactCooldown === 0) {
+        s.keys['KeyG'] = false; s.keys['g'] = false;
+        const giftNPC = getNearbyNPC(s.worldNPCs, s.wx, s.wy, 1.8);
+        if (giftNPC && giftNPC.alignment !== 'hostile') {
+          s.interactCooldown = 30;
+          s.uiPaused = true;
+          setGiftTargetNPC(giftNPC);
+        }
       }
 
       const mr = Math.round((s.py - 1) / 2), mc = Math.round((s.px - 1) / 2);
@@ -2031,6 +2052,11 @@ export default function MazeFirstPerson() {
           if (leveled) addToast({ type: 'levelup', icon: '⬆', title: messages[0] ?? '升等！', duration: 3000 });
         }
         applyQuestMoralRewards(p, claimable);
+        // 任務完成 → 對任務委託 NPC 好感 +15
+        const giverNpc = NPC_DEFS.find(n => n.dialogueId === claimable.giverNpcId);
+        if (giverNpc) {
+          adjustAffinity(p, giverNpc.id, +15, giverNpc.name, g.current.totalGameMins, `任務：${claimable.title}`);
+        }
         setPlayerStats({ ...p });
         setQuestLog(p.quests.map(q => ({ ...q })));
         setActiveQuestOffer(null);
@@ -2087,9 +2113,14 @@ export default function MazeFirstPerson() {
         addToast({ type: 'message', icon: '⭐', title: levelMsg, duration: 3500 });
       }
 
-      // NPC 擊殺：套用善惡 / 名聲變化
+      // NPC 擊殺：套用善惡 / 名聲 / 家族好感變化
       if (result?.won && g.current.pendingNPCKill) {
-        applyNPCKillMoral(p, g.current.pendingNPCKill);
+        const kill = g.current.pendingNPCKill;
+        applyNPCKillMoral(p, kill);
+        // 家族連帶：兄弟姊妹好感 -20
+        if (kill.npcId) {
+          applyFamilyImpact(p, kill.npcId, NPC_DEFS, -20, g.current.totalGameMins);
+        }
         g.current.pendingNPCKill = null;
         setPlayerStats({ ...p });
       } else {
@@ -2453,6 +2484,28 @@ export default function MazeFirstPerson() {
           <StatsPanel
             player={playerRef.current}
             onClose={closeStats}
+          />
+        )}
+        {giftTargetNPC && (
+          <GiftPanel
+            player={playerRef.current}
+            targetNPC={giftTargetNPC}
+            onGive={(itemId, delta) => {
+              const p = playerRef.current;
+              // 移除一個物品
+              const slot = p.items.find(s => s.itemId === itemId);
+              if (slot) {
+                slot.qty -= 1;
+                if (slot.qty <= 0) p.items = p.items.filter(s => s.itemId !== itemId);
+              }
+              // 調整好感
+              adjustAffinity(p, giftTargetNPC.id, delta, giftTargetNPC.name, g.current.totalGameMins, `送禮：${itemId}`);
+              setPlayerStats({ ...p });
+              addToast({ type: 'item', icon: '🎁', title: `送禮給 ${giftTargetNPC.name}，好感 +${delta}`, duration: 2200 });
+              setGiftTargetNPC(null);
+              g.current.uiPaused = false;
+            }}
+            onClose={() => { setGiftTargetNPC(null); g.current.uiPaused = false; }}
           />
         )}
         {showCampRest && (
